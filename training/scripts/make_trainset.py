@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 OUT = ROOT / "dataset" / "train"
 CLASSES = ["robot", "ball"]
 COLORS = {"robot": (0, 200, 255), "ball": (0, 255, 0)}   # BGR
-CONFIGS = [("yolo26n_e30", 1920), ("yolo26n_e30", 2560), ("yolo26n_e30", 3200)]   # (run name, imgsz): their agreement is the confidence
+CONFIGS = [("yolo26n_e100", 1920), ("yolo26n_e100", 2560), ("yolo26n_e100", 3200)]   # (run name, imgsz): their agreement is the confidence
 CONF = 0.25
 
 

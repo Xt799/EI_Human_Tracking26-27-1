@@ -17,10 +17,10 @@ dataset/train/*/Pasted*
 
 # experimental runs: only the final YOLO26n model is committed
 training/runs/*
-!training/runs/yolo26n_e30/
-training/runs/yolo26n_e30/*
-!training/runs/yolo26n_e30/weights/
-!training/runs/yolo26n_e30/args.yaml
-!training/runs/yolo26n_e30/results.csv
-training/runs/yolo26n_e30/weights/*
-!training/runs/yolo26n_e30/weights/best.pt
+!training/runs/yolo26n_e100/
+training/runs/yolo26n_e100/*
+!training/runs/yolo26n_e100/weights/
+!training/runs/yolo26n_e100/args.yaml
+!training/runs/yolo26n_e100/results.csv
+training/runs/yolo26n_e100/weights/*
+!training/runs/yolo26n_e100/weights/best.pt

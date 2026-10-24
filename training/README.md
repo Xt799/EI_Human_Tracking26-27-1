@@ -12,22 +12,32 @@ Install the shared environment once: `uv sync` (CUDA 12.8 torch, also works on R
 ## Pipeline
 1. `uv run python training/scripts/build_full.py` – YOLO dataset in `training/ds_full/` (`--with-test`: exceptional use only; every image appears once per epoch)
 2. `uv run python training/scripts/gen_synthetic.py --n 300 [--preview]` – adds synthetic images (robot/ball cutouts on other backgrounds, partly out of frame or occluded) to the training set
-3. `uv run python training/scripts/train.py --epochs 30 --cache none --workers 4 --name <name>` – output: `training/runs/<name>/weights/best.pt`
+3. `uv run python training/scripts/train.py --epochs 100 --cache none --workers 4 --name <name>` (YOLO26 needs at least ~100 epochs; `--optimizer`, `--lr0`, `--close-mosaic` are configurable) – output: `training/runs/<name>/weights/best.pt`
 4. `uv run python training/scripts/evaluate.py training/runs/<name>/weights/best.pt [--set test|val] [--imgsz 2560] [--conf 0.5]` – mAP, TP/FP/FN, duplicates
 5. `uv run python inference/live_view.py [--weights ...] [--imgsz 2560] [--speed 1]` – live view (largest video by default)
 
 New training images from the videos: `uv run python training/scripts/make_trainset.py [--n 400]` – picks diverse frames from the NON-test videos,
-pre-labels them with `yolo26n_e30` at three input sizes, and writes them as `dataset/train/auto_*` + `review/` + `frames_to_check.txt` for review.
+pre-labels them with `yolo26n_e100` at three input sizes, and writes them as `dataset/train/auto_*` + `review/` + `frames_to_check.txt` for review.
 Correct them in X-AnyLabeling; the script does not overwrite corrected labels (unless `--force` is given).
 
-## Results (`runs/yolo26n_e30`, YOLO26n, test set, conf 0.4)
-| input | robot P / R | ball P / R | frames with >1 robot / ball |
-|---|---|---|---|
-| 1920 | 0.93 / 0.93 | 0.98 / 0.66 | 2 / 0 |
-| 2560 | 0.96 / 0.86 | 0.95 / 0.82 | 2 / 1 |
-| 3200 | 1.00 / 0.78 | 0.97 / 0.82 | 0 / 2 |
-Most missed balls are the distant ~20 px ball at the start of the video; larger input sizes help.
-For comparison, YOLO11n (same data, 1920): robot 0.97 / 0.96, ball 1.00 / 0.71, no duplicate frames – in this experiment YOLO11n was slightly better.
+## Results (`runs/yolo26n_e100`, YOLO26n, 100 epochs, MuSGD; test set, conf 0.4)
+| input | robot P / R | ball P / R | false positives (robot / ball) | frames with >1 detection |
+|---|---|---|---|---|
+| 1920 | 0.97 / 0.99 | 1.00 / 0.74 | 2 / 0 | 0 |
+| **2560** | **0.97 / 0.99** | **0.97 / 1.00** | 2 / 2 | 0 |
+| 3200 | 0.96 / 0.96 | 0.93 / 1.00 | 3 / 6 | 3 |
+2560 px is the best trade-off (it also finds the distant ~20 px ball). mAP50-95 is 0.78 on test and 0.83 on val.
+
+## YOLO26 settings
+YOLO26 needs longer training: at 30 epochs (5370 iterations) `auto` picks AdamW and box accuracy is weaker (test mAP50-95 0.66).
+At 100 epochs (>10000 iterations) `auto` picks YOLO26's own MuSGD optimizer, with mosaic off for the last 10 epochs (`--close-mosaic 10`) – this was the best:
+| training | val mAP50-95 (2560) |
+|---|---|
+| 30 epochs, AdamW (auto) | 0.72 |
+| 100 epochs, AdamW lr0=0.002 | 0.56 (0.81 at 1920) |
+| **100 epochs, MuSGD (auto)** | **0.83** |
+Compared with YOLO11n (30 epochs): at 1920, robot 0.97 / 0.96, ball 1.00 / 0.71. The training setups differ, so this is not a clean comparison.
+The final model was selected on the val set; the test set was measured only once.
 
 ## Notes
 - `--cache ram` runs out of memory with dataloader workers at large image sizes, hence `--cache none --workers 4`.

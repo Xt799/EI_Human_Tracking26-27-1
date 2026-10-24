@@ -15,5 +15,5 @@ uv run python inference/live_view.py --video <video.mp4>   # live view
 ```
 Training pipeline, data and results: [training/README.md](training/README.md).
 
-- `training/runs/yolo26n_e30/weights/best.pt` – the trained model.
+- `training/runs/yolo26n_e100/weights/best.pt` – the trained model.
 - The pretrained `yolo26n.pt` is downloaded automatically on the first training run (`training/`).
