@@ -1,0 +1,31 @@
+{
+  "version": "2.5.4",
+  "flags": {},
+  "imagePath": "auto_171939_004320.jpg",
+  "imageData": null,
+  "imageHeight": 1200,
+  "imageWidth": 1900,
+  "shapes": [
+    {
+      "label": "robot",
+      "score": null,
+      "points": [
+        [
+          1152.2,
+          185.3
+        ],
+        [
+          1247.7,
+          242.5
+        ]
+      ],
+      "group_id": null,
+      "description": "auto: robot support=0.86 cfgs=2/3 meanconf=0.43",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    }
+  ]
+}

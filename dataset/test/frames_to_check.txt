@@ -1,0 +1,64 @@
+frame_000125.jpg: no ball found
+frame_000376.jpg: possible ball NOT labelled (0.29, 1 cfg)
+frame_000627.jpg: no ball found
+frame_000877.jpg: possible ball NOT labelled (0.60, 1 cfg)
+frame_001128.jpg: no ball found
+frame_001170.jpg: possible ball NOT labelled (0.31, 1 cfg)
+frame_001379.jpg: no ball found
+frame_001475.jpg: no ball found
+frame_001630.jpg: possible ball NOT labelled (0.30, 1 cfg)
+frame_001881.jpg: possible ball NOT labelled (0.67, 1 cfg)
+frame_002132.jpg: possible ball NOT labelled (0.41, 1 cfg)
+frame_002382.jpg: possible ball NOT labelled (0.71, 1 cfg)
+frame_002520.jpg: no robot found; no ball found
+frame_002633.jpg: possible ball NOT labelled (0.64, 1 cfg)
+frame_002884.jpg: possible ball NOT labelled (0.43, 1 cfg)
+frame_003135.jpg: possible ball NOT labelled (0.50, 1 cfg)
+frame_003270.jpg: no robot found; no ball found
+frame_003386.jpg: no robot found; possible ball NOT labelled (0.59, 1 cfg)
+frame_003637.jpg: no robot found; no ball found
+frame_003815.jpg: no robot found; no ball found
+frame_003887.jpg: ball uncertain (0.32, 2 cfg)
+frame_004138.jpg: no robot found; no ball found
+frame_004320.jpg: no robot found; no ball found
+frame_004389.jpg: no robot found; no ball found
+frame_004500.jpg: no robot found; no ball found
+frame_004640.jpg: no ball found
+frame_004891.jpg: second robot candidate; possible ball NOT labelled (0.42, 1 cfg)
+frame_005110.jpg: no robot found; no ball found
+frame_005142.jpg: no ball found
+frame_005393.jpg: possible ball NOT labelled (0.53, 1 cfg)
+frame_005845.jpg: second ball candidate
+frame_006145.jpg: possible ball NOT labelled (0.67, 1 cfg)
+frame_006647.jpg: robot uncertain (0.46, 3 cfg)
+frame_007650.jpg: possible robot NOT labelled (0.71, 1 cfg)
+frame_007940.jpg: second ball candidate
+frame_009657.jpg: no robot found; no ball found
+frame_009800.jpg: second robot candidate
+frame_010158.jpg: no ball found
+frame_011162.jpg: robot uncertain (0.39, 2 cfg)
+frame_011413.jpg: possible robot NOT labelled (0.76, 1 cfg)
+frame_011663.jpg: second robot candidate
+frame_012416.jpg: ball uncertain (0.44, 2 cfg)
+frame_013020.jpg: second robot candidate
+frame_013419.jpg: possible robot NOT labelled (0.85, 1 cfg); no ball found
+frame_013921.jpg: no robot found
+frame_014172.jpg: possible robot NOT labelled (0.32, 1 cfg)
+frame_014423.jpg: no robot found
+frame_014673.jpg: no robot found
+frame_015335.jpg: second robot candidate
+frame_015677.jpg: second robot candidate
+frame_015715.jpg: second robot candidate
+frame_015900.jpg: possible robot NOT labelled (0.80, 1 cfg)
+frame_017060.jpg: second robot candidate
+frame_017200.jpg: second robot candidate; no ball found
+frame_017565.jpg: second robot candidate
+frame_017934.jpg: no robot found; second ball candidate
+frame_018687.jpg: no ball found
+frame_018938.jpg: no robot found; possible ball NOT labelled (0.31, 1 cfg)
+frame_018965.jpg: no robot found; no ball found
+frame_019189.jpg: no ball found
+frame_019439.jpg: possible robot NOT labelled (0.69, 1 cfg); no ball found
+frame_019600.jpg: robot uncertain (0.44, 2 cfg); second robot candidate; no ball found
+frame_019690.jpg: no ball found
+frame_019941.jpg: no ball found
