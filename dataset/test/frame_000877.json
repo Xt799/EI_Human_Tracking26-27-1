@@ -1,0 +1,70 @@
+{
+  "version": "4.0.6",
+  "flags": {},
+  "checked": false,
+  "shapes": [
+    {
+      "label": "robot",
+      "score": null,
+      "points": [
+        [
+          907.0,
+          698.1
+        ],
+        [
+          1003.2,
+          698.1
+        ],
+        [
+          1003.2,
+          777.5
+        ],
+        [
+          907.0,
+          777.5
+        ]
+      ],
+      "group_id": null,
+      "description": "auto: robot support=2.68 cfgs=3/3 meanconf=0.89",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "ball",
+      "score": null,
+      "points": [
+        [
+          932.9000000000001,
+          429.09999999999997
+        ],
+        [
+          955.2,
+          429.09999999999997
+        ],
+        [
+          955.2,
+          452.69999999999993
+        ],
+        [
+          932.9000000000001,
+          452.69999999999993
+        ]
+      ],
+      "group_id": null,
+      "description": "auto (single config, CHECK): ball meanconf=0.59",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    }
+  ],
+  "imagePath": "frame_000877.jpg",
+  "imageData": null,
+  "imageHeight": 1200,
+  "imageWidth": 1900,
+  "description": ""
+}

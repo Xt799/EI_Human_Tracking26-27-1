@@ -1,0 +1,26 @@
+# környezet, cache, naplók
+.venv/
+__pycache__/
+.DS_Store
+*.log
+screenshot_*.png
+
+# nagy / generált / letölthető
+videos/
+training/ds_full/
+training/ds_eval/
+*.pt
+dataset/backgrounds/
+dataset/test/review/
+dataset/train/*/raw/
+dataset/train/*/Pasted*
+
+# kísérleti futások: csak a végleges YOLO26n modell kerül fel
+training/runs/*
+!training/runs/yolo26n_e30/
+training/runs/yolo26n_e30/*
+!training/runs/yolo26n_e30/weights/
+!training/runs/yolo26n_e30/args.yaml
+!training/runs/yolo26n_e30/results.csv
+training/runs/yolo26n_e30/weights/*
+!training/runs/yolo26n_e30/weights/best.pt

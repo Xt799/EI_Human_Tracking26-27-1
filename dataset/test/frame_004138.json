@@ -1,0 +1,41 @@
+{
+  "version": "4.0.6",
+  "flags": {},
+  "checked": false,
+  "shapes": [
+    {
+      "label": "ball",
+      "score": null,
+      "points": [
+        [
+          931.7,
+          430.6
+        ],
+        [
+          953.0,
+          430.6
+        ],
+        [
+          953.0,
+          452.2
+        ],
+        [
+          931.7,
+          452.2
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    }
+  ],
+  "imagePath": "frame_004138.jpg",
+  "imageData": null,
+  "imageHeight": 1200,
+  "imageWidth": 1900,
+  "description": ""
+}
