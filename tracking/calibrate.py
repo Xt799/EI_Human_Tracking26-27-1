@@ -1,20 +1,8 @@
 """
-calibrate.py  --  build the floor map (pixel -> metres homography) for one viewpoint.
+Build the floor map (pixels -> metres on the floor) for one camera position by clicking tile corners.
 
-Set VIDEO_PATH, FRAME_SEC and VIEW below, then run from the repo root:
-    .venv\\Scripts\\python.exe tracking\\calibrate.py
-
-What happens:
-  1. one frame is read from the video (at FRAME_SEC) and lens-corrected
-  2. a window shows it; click POINTS tile corners, spread over the WHOLE floor:
-     near and far, left and right. More points average out click errors.
-     Each click is snapped to the nearest real corner in the image.
-  3. in the terminal, type each point's tile coordinates (columns, rows) counted
-     from the origin corner; metres = tiles x TILE_PITCH_M
-  4. the homography is saved to tracking/calibration/floor_map_<VIEW>.npy, together
-     with a .json of the points and a .jpg overlay of the tile grid for checking
-
-Keys in the window:  u = undo last click,  q = abort.
+Set the settings below, then:  .venv\\Scripts\\python.exe tracking\\calibrate.py
+Procedure and origin convention: calibration/README.md. Keys: u undo last click, q abort.
 """
 import json
 import os
@@ -22,35 +10,20 @@ import os
 import cv2
 import numpy as np
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-CALIB_DIR = os.path.join(SCRIPT_DIR, "calibration")
+from common import CALIB_DIR, SCRIPT_DIR, lens_correction
 
-# ---- Settings ----
-# The existing maps were made from: steep = 171200 at 20 s, low = 180049 at 30 s.
+# ---- Settings ----  (existing maps: steep = 171200 at 20 s, low = 180049 at 30 s)
 VIDEO_PATH = os.path.join(SCRIPT_DIR, "..", "videos", "basler_record_20261012_171200.mp4")
-FRAME_SEC = 20          # second of the video to take the frame from (choose a moment with the floor visible)
-VIEW = "steep"          # name of the camera position; the map is saved as floor_map_<VIEW>.npy
+FRAME_SEC = 20          # second of the video to take the frame from (floor visible)
+CAMERA = "steep"        # name of the camera position; saved as floor_map_<CAMERA>.npy
 POINTS = 6              # tile corners to click, at least 4
 
 TILE_PITCH_M = 0.198    # 19.4 cm tile + 0.4 cm gap
 DISPLAY_SCALE = 0.5
 
 
-def undistort(frame):
-    """Lens correction with the stored camera matrix; returns the frame unchanged if files are missing."""
-    try:
-        K = np.load(os.path.join(CALIB_DIR, "camera_matrix.npy"))
-        D = np.load(os.path.join(CALIB_DIR, "distortion_coefficients.npy"))
-    except FileNotFoundError:
-        print("No lens files found, using the raw frame.")
-        return frame
-    h, w = frame.shape[:2]
-    newK, _ = cv2.getOptimalNewCameraMatrix(K, D, (w, h), 0, (w, h))
-    return cv2.undistort(frame, K, D, None, newK)
-
-
 def click_points(frame, n):
-    """Show the frame, collect n clicks, snap each to the nearest corner (sub-pixel)."""
+    """Shows the frame and collects n clicks, each snapped to the nearest image corner. None if aborted."""
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     pts = []
     win = f"calibrate: click {n} tile corners spread over the whole floor (u = undo, q = abort)"
@@ -66,7 +39,6 @@ def click_points(frame, n):
     def on_mouse(event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN and len(pts) < n:
             p = np.array([[x / DISPLAY_SCALE, y / DISPLAY_SCALE]], dtype=np.float32)
-            # snap to the nearest corner within an 11x11 px window
             cv2.cornerSubPix(gray, p, (5, 5), (-1, -1),
                              (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.01))
             pts.append((float(p[0, 0]), float(p[0, 1])))
@@ -91,7 +63,7 @@ def click_points(frame, n):
 
 
 def ask_tile_coords(n):
-    """Terminal input: tile column and row of each clicked corner, counted from the origin corner."""
+    """Asks for each clicked corner's tile column and row, counted from the origin corner."""
     print("\nFor each clicked point, type its tile coordinates as  col row  (integers, counted from the origin corner).")
     print("Example: the origin itself is  0 0 ; the corner 3 tiles right and 5 tiles down is  3 5 .")
     coords = []
@@ -107,19 +79,16 @@ def ask_tile_coords(n):
 
 
 def draw_grid(frame, H, span=60):
-    """Overlay the tile grid implied by H over the whole image (±span tiles around the origin), for visual checking.
-    The origin tile corner is marked in red, the column axis in blue, the row axis in yellow."""
+    """Draws the tile grid implied by H over the image: origin red, column axis blue, row axis yellow."""
     Hinv = np.linalg.inv(H)
     h, w = frame.shape[:2]
     out = frame.copy()
 
     def px(c, r):
-        p = cv2.perspectiveTransform(np.array([[[c * TILE_PITCH_M, r * TILE_PITCH_M]]], np.float32), Hinv)[0, 0]
-        return p
+        return cv2.perspectiveTransform(np.array([[[c * TILE_PITCH_M, r * TILE_PITCH_M]]], np.float32), Hinv)[0, 0]
 
     def seg(p, q, color, thick=1):
-        # draw only if both ends are finite and roughly on the canvas (lines behind the camera explode)
-        if np.all(np.isfinite([p, q])) and max(abs(p).max(), abs(q).max()) < 20 * max(w, h):
+        if np.all(np.isfinite([p, q])) and max(abs(p).max(), abs(q).max()) < 20 * max(w, h):   # grid lines behind the camera explode
             cv2.line(out, tuple(p.astype(int)), tuple(q.astype(int)), color, thick, cv2.LINE_AA)
 
     for c in range(-span, span + 1):
@@ -146,25 +115,21 @@ def main():
     cap.release()
     if not ok:
         raise SystemExit(f"Could not read a frame from {VIDEO_PATH}")
-    frame = undistort(frame)
+    frame = lens_correction(frame.shape[1], frame.shape[0])(frame)
 
     pts_px = click_points(frame, POINTS)
     if pts_px is None:
         raise SystemExit("Aborted.")
     tiles = ask_tile_coords(len(pts_px))
     pts_m = [(c * TILE_PITCH_M, r * TILE_PITCH_M) for c, r in tiles]
+    H, _ = cv2.findHomography(np.array(pts_px, np.float32), np.array(pts_m, np.float32), method=0)   # least squares over all points
 
-    # Least-squares fit over all points (with exactly 4 points the fit is exact)
-    H, _ = cv2.findHomography(np.array(pts_px, np.float32), np.array(pts_m, np.float32), method=0)
-
-    # Self-check: map the clicked pixels through H and compare with the typed metres
     back = cv2.perspectiveTransform(np.array(pts_px, np.float32).reshape(-1, 1, 2), H).reshape(-1, 2)
     err_cm = np.linalg.norm(back - np.array(pts_m), axis=1) * 100
     print(f"\nResidual per point (cm): {np.round(err_cm, 1)}")
     print("A few cm is normal. One point far above the others means its tile count is wrong; rerun.")
 
-    os.makedirs(CALIB_DIR, exist_ok=True)
-    base = os.path.join(CALIB_DIR, f"floor_map_{VIEW}")
+    base = os.path.join(CALIB_DIR, f"floor_map_{CAMERA}")
     np.save(base + ".npy", H)
     with open(base + ".json", "w") as f:
         json.dump({"video": os.path.basename(VIDEO_PATH), "sec": FRAME_SEC, "tile_pitch_m": TILE_PITCH_M,

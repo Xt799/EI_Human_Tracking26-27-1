@@ -4,20 +4,11 @@
 """
 Basler camera video recorder.
 
-Origin: uploaded by a group member to the project folder as basler_record_video.py.
-Only comments were added.
+File path:
+    /home/haichen/ros2_ws/src/basler_record_video.py
 
-Purpose for us: run this IN THE LAB, with the real cameras, to record the
-footage that everyone develops against at home (people_tracking.py reads an
-MP4 instead of the camera, see TODO(STT) 2 there).
-
-The recordings of 12 Oct 2026 (see README "Recordings") were made with this
-script. If another session ever happens, record:
-  - a few seconds with nobody in the room, floor clearly visible, camera not
-    moved afterwards (calibration frame)
-  - the owner walking, sitting, bending, picking something up
-  - a second person (stranger) doing the same, then both together, crossing paths
-  - the robot and the toy on the floor
+Recorded videos will be saved to:
+    /home/haichen/ros2_ws/src/Video_from_basler
 
 Stop recording:
     - Press SPACE
@@ -47,9 +38,6 @@ CAM_HEIGHT = 1200
 # It should match the real camera FPS for real-time playback.
 RECORD_FPS = 30.0
 
-# TODO(STT) 15: previous student's Linux path. Change to a folder next to this
-# repo, e.g.  OUTPUT_DIR = "../recordings"  (recordings/ is in .gitignore so
-# large videos are never committed by accident).
 OUTPUT_DIR = "/home/haichen/ros2_ws/src/Video_from_basler"
 
 # Keep MP4

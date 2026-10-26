@@ -32,3 +32,8 @@ training/runs/yolo26n_e30/weights/*
 !videos/
 videos/*
 !videos/.gitkeep
+
+# owner enrolment output: personal, per session
+tracking/owner.npz
+tracking/owner.jpg
+tracking/enrol_candidates.jpg
