@@ -27,3 +27,8 @@ training/runs/yolo26n_e30/weights/*
 
 # people pose model used by tracking/ (stock Ultralytics file, never changes)
 !tracking/models/yolo11s-pose.pt
+
+# keep the (empty) videos folder: the recordings are copied there, see tracking/README.md
+!videos/
+videos/*
+!videos/.gitkeep

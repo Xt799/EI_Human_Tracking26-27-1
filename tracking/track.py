@@ -1,23 +1,26 @@
 """
-people_tracking.py  --  people detection, tracking and floor position.
+track.py  --  people, robot and ball: detection, tracking and floor position.
 
-Based on the previous group's cap_detection/"Untitled-3_Orientation copy.py"
-(EI_Human_Tracking26-27-1, main branch); detection, lens correction and the
-drawing helpers come from there.
+People detection, lens correction and the drawing helpers are based on the
+previous group's cap_detection/"Untitled-3_Orientation copy.py" (main branch).
+Robot and ball use the YOLO26n detector trained in training/.
 
 Run from the repo root:
-    .venv\\Scripts\\python.exe tracking\\people_tracking.py
+    .venv\\Scripts\\python.exe tracking\\track.py
 
 Per frame:
   1. read a frame from VIDEO_PATH (or the first Basler camera if unset)
   2. lens correction with calibration/camera_matrix.npy
   3. YOLO pose in tracking mode: every person gets a persistent track ID
-  4. floor point of each person from the lowest visible keypoints
-     (ankles, else knees, else hips), converted to metres with the floor map
-     of this camera position (calibration/floor_map_<view>.npy), smoothed
-  5. draw boxes, skeletons, IDs and metre positions
+  4. YOLO26n detector: robot and ball boxes
+  5. floor point of each person from the lowest visible keypoints
+     (ankles, else knees, else hips); of each object the bottom centre of its box;
+     all converted to metres with the floor map of this camera position
+     (calibration/floor_map_<view>.npy) and smoothed
+  6. draw boxes, skeletons, IDs and metre positions
 
-Owner / stranger: not decided yet, every track is "unknown" (TODO(STT) 5).
+Owner / stranger: not decided yet, every person is "unknown" (TODO(STT) 5).
+Robot heading: not computed yet (TODO(STT) 13).
 Keys: q or Esc quit, p pause, c continue.
 """
 
@@ -41,9 +44,8 @@ except ImportError:
 # ========================= CONFIG =========================
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Input: a video file for development, None = first Basler camera found.
-VIDEO_PATH = os.path.join(SCRIPT_DIR, "..", "videos", "clips",
-                          "sitting_steep_man_20261012_171200_95-120s.mp4")
+# Input: a recording from videos/ at the repo root (not in git, see README), None = first Basler camera found.
+VIDEO_PATH = os.path.join(SCRIPT_DIR, "..", "videos", "basler_record_20261012_171200.mp4")
 
 # Camera position of the input, which selects the floor map. None = derive it from
 # the recording id in the file name (see RECORDING_VIEWS); set it explicitly for a live camera.
@@ -51,16 +53,22 @@ VIEW = None
 RECORDING_VIEWS = {"165859": "steep", "171200": "steep", "171939": "steep", "180049": "low"}
 
 POSE_MODEL_PATH = os.path.join(SCRIPT_DIR, "models", "yolo11s-pose.pt")
+OBJECT_MODEL_PATH = os.path.join(SCRIPT_DIR, "..", "training", "runs", "yolo26n_e30", "weights", "best.pt")
 CALIB_DIR = os.path.join(SCRIPT_DIR, "calibration")
 
 CAM_WIDTH, CAM_HEIGHT = 1900, 1200   # requested from a Basler camera; video input uses the file's size
 DISPLAY_SCALE = 0.60
 POSE_CONF_THRES = 0.25               # minimum confidence for a person box
 KPT_CONF_THRES = 0.5                 # a keypoint below this is treated as not visible
+OBJECT_CONF_THRES = 0.5              # minimum confidence for a robot / ball box
+OBJECT_IMGSZ = 1920                  # detector input size; 2560 finds the far-away ball better but is slower
 TRACKER = "bytetrack.yaml"           # Ultralytics built-in tracker config
 SMOOTH_ALPHA = 0.3                   # exponential smoothing of the metre position (1 = no smoothing)
 TRACK_TIMEOUT_S = 1.0                # forget a track not seen for this long
 REALTIME = True                      # video input: keep the video clock by skipping frames when processing is slower
+# Floor points outside this range (metres from the origin) are discarded: a detection on a wall or a
+# shelf maps to a point far outside the room. Loose box around the floor seen by both cameras.
+FLOOR_BOUNDS_M = ((-5.0, 4.0), (-3.0, 5.5))
 SHOW_FPS = True
 WIN = "People tracking"
 
@@ -80,7 +88,8 @@ COL_LEFT = (0, 0, 255)
 COL_RIGHT = (0, 255, 0)
 COL_MID = (220, 220, 220)
 COL_FLOOR_DOT = (255, 255, 255)
-COL_BOX = {"unknown": (200, 200, 200), "owner": (255, 0, 0), "stranger": (0, 255, 255)}
+COL_BOX = {"unknown": (200, 200, 200), "owner": (255, 0, 0), "stranger": (0, 255, 255),
+           "robot": (0, 200, 255), "ball": (0, 255, 0)}
 TEXT_BG = (255, 255, 255)
 TEXT_COL = (0, 0, 0)
 FONT = cv2.FONT_HERSHEY_SIMPLEX
@@ -95,8 +104,10 @@ def put_label(img, text, org, bg_color=TEXT_BG, txt_color=TEXT_COL, scale=0.6, t
 
 
 def to_metres(H, pt_px):
-    """One pixel point on the floor -> (x, y) metres through the floor map."""
-    return cv2.perspectiveTransform(np.asarray(pt_px, np.float32).reshape(1, 1, 2), H)[0, 0]
+    """One pixel point on the floor -> (x, y) metres through the floor map, or None if it lands outside the room."""
+    m = cv2.perspectiveTransform(np.asarray(pt_px, np.float32).reshape(1, 1, 2), H)[0, 0]
+    (x0, x1), (y0, y1) = FLOOR_BOUNDS_M
+    return m if x0 <= m[0] <= x1 and y0 <= m[1] <= y1 else None
 
 
 def floor_point_px(kxy, kconf):
@@ -126,12 +137,19 @@ def view_for(video_path):
     raise SystemExit("Cannot tell the camera position from the file name; set VIEW to 'steep' or 'low'.")
 
 
-class Track:
-    """What we remember about one tracked person between frames."""
+def box_floor_point(xyxy):
+    """Pixel point where a boxed object touches the floor: bottom centre of the box.
+    For the robot this is its near edge, so the position is biased ~15 cm towards the camera."""
+    x1, y1, x2, y2 = xyxy
+    return np.array([(x1 + x2) * 0.5, y2], np.float32)
 
-    def __init__(self, track_id):
+
+class Track:
+    """What we remember about one tracked person or object between frames."""
+
+    def __init__(self, track_id, label="unknown"):
         self.id = track_id
-        self.label = "unknown"      # "unknown" | "owner" | "stranger"   (TODO(STT) 5 decides this)
+        self.label = label          # person: "unknown" | "owner" | "stranger" (TODO(STT) 5); object: "robot" | "ball"
         self.floor_m = None         # smoothed (x, y) in metres
         self.source = None          # which keypoints gave the last floor point
         self.last_seen = 0.0        # video time in seconds
@@ -148,6 +166,7 @@ class Track:
 # ========================= MAIN =========================
 def main():
     pose_model = YOLO(POSE_MODEL_PATH)
+    object_model = YOLO(OBJECT_MODEL_PATH)       # classes: robot, ball
     # TODO(STT) 5: load the owner's appearance signature here (owner.npz written by
     # enrol_owner.py, embedding from a person re-identification network). Every
     # "unknown" track is compared against it every few frames; three consecutive
@@ -242,7 +261,8 @@ def main():
     cv2.resizeWindow(WIN, int(frame_w * DISPLAY_SCALE), int(frame_h * DISPLAY_SCALE))
     print("Running. q/Esc quit, p pause, c continue.")
 
-    tracks = {}
+    tracks = {}                                  # people, by track id
+    objects = {"robot": Track("robot", "robot"), "ball": Track("ball", "ball")}
     paused = False
     prev_t, fps, frames = time.time(), 0.0, 0
     frame = frame0
@@ -287,8 +307,9 @@ def main():
             for i, tid in enumerate(ids):
                 tr = tracks.setdefault(tid, Track(tid))
                 pt, source = floor_point_px(kxy[i], kconf[i])
-                if pt is not None:
-                    tr.update(to_metres(H, pt), source, t)
+                m = to_metres(H, pt) if pt is not None else None
+                if m is not None:
+                    tr.update(m, source, t)
                 else:
                     tr.last_seen = t          # seen, but no usable floor point: keep the last position
 
@@ -315,12 +336,37 @@ def main():
             for tid in [k for k, tr in tracks.items() if t - tr.last_seen > TRACK_TIMEOUT_S]:
                 del tracks[tid]
 
+            # ---- Robot and ball: best box per class, floor point at the bottom centre ----
+            ro = object_model(frame_u, imgsz=OBJECT_IMGSZ, conf=OBJECT_CONF_THRES, agnostic_nms=True, verbose=False)[0]
+            best = {}
+            for xyxy, conf, cls in zip(ro.boxes.xyxy.cpu().numpy(), ro.boxes.conf.cpu().numpy(), ro.boxes.cls.cpu().numpy().astype(int)):
+                name = object_model.names[cls]
+                if name in objects and (name not in best or conf > best[name][1]):
+                    best[name] = (xyxy, float(conf))
+            for name, (xyxy, conf) in best.items():
+                obj = objects[name]
+                pt = box_floor_point(xyxy)
+                m = to_metres(H, pt)
+                if m is None:
+                    continue                  # not on the floor (e.g. something on a wall): ignore
+                obj.update(m, "box", t)
+                x1, y1, x2, y2 = xyxy.astype(int)
+                cv2.rectangle(canvas, (x1, y1), (x2, y2), COL_BOX[name], 2)
+                cv2.circle(canvas, tuple(pt.astype(int)), 6, COL_FLOOR_DOT, -1)
+                put_label(canvas, f"{name} {conf:.2f}  x {obj.floor_m[0]:.2f} m  y {obj.floor_m[1]:.2f} m", (x1, y1 - 6))
+                # TODO(STT) 13: robot heading, e.g. from the direction of motion of its smoothed position.
+            # Objects out of view keep their last position until TRACK_TIMEOUT_S, then are reported as not visible.
+            for obj in objects.values():
+                if obj.floor_m is not None and t - obj.last_seen > TRACK_TIMEOUT_S:
+                    obj.floor_m = None
+
             # ---- HUD ----
             frames += 1
             now = time.time()
             if now - prev_t >= 1.0:
                 fps, frames, prev_t = frames / (now - prev_t), 0, now
-            put_label(canvas, f"view {view} | people {n} | tracks {len(tracks)}" + (f" | {fps:.1f} fps" if SHOW_FPS else ""), (14, 36), bg_color=(230, 230, 230))
+            seen = " ".join(k for k, o in objects.items() if o.floor_m is not None) or "-"
+            put_label(canvas, f"view {view} | people {n} | tracks {len(tracks)} | objects {seen}" + (f" | {fps:.1f} fps" if SHOW_FPS else ""), (14, 36), bg_color=(230, 230, 230))
 
             cv2.imshow(WIN, cv2.resize(canvas, (0, 0), fx=DISPLAY_SCALE, fy=DISPLAY_SCALE))
             key = cv2.waitKey(1) & 0xFF
