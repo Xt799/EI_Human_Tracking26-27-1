@@ -24,3 +24,6 @@ training/runs/yolo26n_e30/*
 !training/runs/yolo26n_e30/results.csv
 training/runs/yolo26n_e30/weights/*
 !training/runs/yolo26n_e30/weights/best.pt
+
+# people pose model used by tracking/ (stock Ultralytics file, never changes)
+!tracking/models/yolo11s-pose.pt
