@@ -10,6 +10,7 @@ dependencies = [
     "ultralytics",
     "torch",
     "torchvision",
+    "lap",            # tracker (ByteTrack) dependency of ultralytics
 ]
 
 [tool.uv.sources]
