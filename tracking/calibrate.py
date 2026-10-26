@@ -1,23 +1,21 @@
 """
 calibrate.py  --  build the floor map (pixel -> metres homography) for one viewpoint.
 
-Run from the repo root:
-    .venv\\Scripts\\python.exe tracking\\calibrate.py --view steep --video videos\\clips\\calib_steep_empty_floor_20261012_171200_20-60s.mp4
-    .venv\\Scripts\\python.exe tracking\\calibrate.py --view low   --video videos\\clips\\calib_low_view_20261012_180049_30-50s.mp4
+Set VIDEO_PATH, FRAME_SEC and VIEW below, then run from the repo root:
+    .venv\\Scripts\\python.exe tracking\\calibrate.py
 
 What happens:
-  1. one frame is read from the video and lens-corrected
-  2. a window shows it; click N TILE CORNERS (default 6, --points), spread over the
-     WHOLE floor: near and far, left and right. More points average out click errors.
+  1. one frame is read from the video (at FRAME_SEC) and lens-corrected
+  2. a window shows it; click POINTS tile corners, spread over the WHOLE floor:
+     near and far, left and right. More points average out click errors.
      Each click is snapped to the nearest real corner in the image.
   3. in the terminal, type each point's tile coordinates (columns, rows) counted
-     from the origin corner you chose; metres = tiles x TILE_PITCH_M
-  4. the homography is saved to tracking/calibration/floor_map_<view>.npy, together
+     from the origin corner; metres = tiles x TILE_PITCH_M
+  4. the homography is saved to tracking/calibration/floor_map_<VIEW>.npy, together
      with a .json of the points and a .jpg overlay of the tile grid for checking
 
 Keys in the window:  u = undo last click,  q = abort.
 """
-import argparse
 import json
 import os
 
@@ -26,7 +24,15 @@ import numpy as np
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CALIB_DIR = os.path.join(SCRIPT_DIR, "calibration")
-TILE_PITCH_M = 0.198          # 19.4 cm tile + 0.4 cm gap
+
+# ---- Settings ----
+# The existing maps were made from: steep = 171200 at 20 s, low = 180049 at 30 s.
+VIDEO_PATH = os.path.join(SCRIPT_DIR, "..", "videos", "basler_record_20261012_171200.mp4")
+FRAME_SEC = 20          # second of the video to take the frame from (choose a moment with the floor visible)
+VIEW = "steep"          # name of the camera position; the map is saved as floor_map_<VIEW>.npy
+POINTS = 6              # tile corners to click, at least 4
+
+TILE_PITCH_M = 0.198    # 19.4 cm tile + 0.4 cm gap
 DISPLAY_SCALE = 0.5
 
 
@@ -131,24 +137,18 @@ def draw_grid(frame, H, span=60):
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--video", required=True)
-    ap.add_argument("--view", required=True, help="name of the viewpoint, e.g. steep or low")
-    ap.add_argument("--sec", type=float, default=0.0, help="seconds into the video to take the frame from")
-    ap.add_argument("--points", type=int, default=6, help="number of tile corners to click (at least 4)")
-    a = ap.parse_args()
-    if a.points < 4:
-        raise SystemExit("--points must be at least 4")
+    if POINTS < 4:
+        raise SystemExit("POINTS must be at least 4")
 
-    cap = cv2.VideoCapture(a.video)
-    cap.set(cv2.CAP_PROP_POS_MSEC, a.sec * 1000)
+    cap = cv2.VideoCapture(VIDEO_PATH)
+    cap.set(cv2.CAP_PROP_POS_MSEC, FRAME_SEC * 1000)
     ok, frame = cap.read()
     cap.release()
     if not ok:
-        raise SystemExit(f"Could not read a frame from {a.video}")
+        raise SystemExit(f"Could not read a frame from {VIDEO_PATH}")
     frame = undistort(frame)
 
-    pts_px = click_points(frame, a.points)
+    pts_px = click_points(frame, POINTS)
     if pts_px is None:
         raise SystemExit("Aborted.")
     tiles = ask_tile_coords(len(pts_px))
@@ -164,10 +164,10 @@ def main():
     print("A few cm is normal. One point far above the others means its tile count is wrong; rerun.")
 
     os.makedirs(CALIB_DIR, exist_ok=True)
-    base = os.path.join(CALIB_DIR, f"floor_map_{a.view}")
+    base = os.path.join(CALIB_DIR, f"floor_map_{VIEW}")
     np.save(base + ".npy", H)
     with open(base + ".json", "w") as f:
-        json.dump({"video": os.path.basename(a.video), "sec": a.sec, "tile_pitch_m": TILE_PITCH_M,
+        json.dump({"video": os.path.basename(VIDEO_PATH), "sec": FRAME_SEC, "tile_pitch_m": TILE_PITCH_M,
                    "points_px": pts_px, "points_tiles": tiles, "points_m": pts_m}, f, indent=2)
     overlay = draw_grid(frame, H)
     cv2.imwrite(base + ".jpg", overlay, [cv2.IMWRITE_JPEG_QUALITY, 85])

@@ -5,10 +5,10 @@ This folder turns the lab recordings into floor positions. A fixed camera looks 
 ## Running
 
 ```
-.venv\Scripts\python.exe tracking\people_tracking.py        # people on a clip; set VIDEO_PATH at the top of the file
+.venv\Scripts\python.exe tracking\track.py        # people, robot and ball on a recording; VIDEO_PATH at the top of the file
 ```
 
-The environment is the shared one from the repo root (`uv sync`, or the existing `.venv`). The recordings are not in the repo; the scripts expect them in `../videos/`, with purpose-named excerpts in `../videos/clips/`. Three recordings (`165859`, `171200`, `171939`) were made from a high camera position we call the steep view, one (`180049`) from a lower position we call the low view.
+The environment is the shared one from the repo root (`uv sync`, or the existing `.venv`). The recordings are not in git: copy the four `basler_record_20261012_*.mp4` files into `videos/` at the repo root, the same folder `inference/live_view.py` uses. Three of them (`165859`, `171200`, `171939`) were made from a high camera position we call the steep view, one (`180049`) from a lower position we call the low view; the scripts pick the matching floor map from the recording id in the file name.
 
 ## How positions become metres
 
@@ -16,8 +16,7 @@ Pixels cannot be compared between frames or cameras, so every position is conver
 
 ## Files
 
-- `people_tracking.py` – detects people, assigns owner or stranger, computes floor positions and draws the result.
-- `robot_toy_tracking.py` – robot and ball detection with ROS 2 output, from the previous group.
+- `track.py` – the tracking loop: detects people with persistent IDs, the robot and the ball, computes their floor positions in metres and draws the result. The floor map is chosen from the recording id in the file name. Playback follows the video clock, dropping frames when processing is slower than the recording.
 - `calibrate.py` – builds a floor map from clicked tile corners.
 - `calibration/` – lens correction files and the floor maps `steep` and `low`.
 - `models/yolo11s-pose.pt` – the pose model. Robot and ball weights are in `../training/runs/yolo26n_e30/weights/best.pt`.

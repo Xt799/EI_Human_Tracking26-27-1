@@ -4,10 +4,10 @@ Pixel → metres on the floor. Lens correction (`camera_matrix.npy`, `distortion
 
 Calibration has been done for both camera positions in the recordings, `steep` and `low`, and the results are saved here. The scripts load them directly; nothing needs to be rerun for the existing recordings. Both maps share the same origin (the tile corner at the red tape cross) and were checked against each other: the same tape marks give the same metre coordinates from either map.
 
-Only a new camera position needs a new map:
+Only a new camera position needs a new map. Set the video, the second to take the frame from and the name of the position at the top of `calibrate.py`, then:
 
 ```
-.venv\Scripts\python.exe tracking\calibrate.py --view <name> --video <clip with the floor visible>
+.venv\Scripts\python.exe tracking\calibrate.py
 ```
 
 Click 6 tile corners spread over the whole floor, one of them the origin; type each one's tile count from the origin as `col row`. Tiles are 19.8 cm centre to centre.
