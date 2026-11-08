@@ -1,32 +1,40 @@
 # Tracking: people, owner and stranger, robot, ball
 
-This folder turns the lab recordings into floor positions. A fixed camera looks at the room; for every frame we detect the people with a pose model and the robot and the ball with the YOLO26n model from `training/`, and convert each detection's position on the floor from pixels into metres. The output is a trajectory for every person and object, with each person labelled as the owner or a stranger.
+Two fixed cameras in opposite corners of the lab record the room at the same time. For every frame we detect the people with a pose model and the robot and the ball with the YOLO26n model from `training/`, convert each detection's position on the floor from pixels into metres, and merge the two views into one set of people and objects. The output is a trajectory for every person and object in room coordinates, with each person labelled as the owner or a stranger.
 
 ## Running
 
 ```
-.venv\Scripts\python.exe tracking\enrol_owner.py <video>             # once per session: who is the owner, from a short video of them
-.venv\Scripts\python.exe tracking\track.py <video> <camera>          # people, owner, robot and ball; camera = steep or low
+uv run python tracking/tools/make_pair.py videos/basler_record_20261012_180049.mp4 low videos/AAA_basler_record_20261012_160049_FIXED.mp4 opposite 25
+uv run python tracking/enrol_owner.py videos/<clip with the owner's face>.mp4
+uv run python tracking/track.py videos/pair_low.mp4 low videos/pair_opposite.mp4 opposite
 ```
 
-`<camera>` is the position the video was recorded from and selects the floor map; `camera` in place of a video file uses the live Basler camera. The environment is the shared one from the repo root (`uv sync`, or the existing `.venv`). The recordings are not in git: copy the four `basler_record_20261012_*.mp4` files into `videos/` at the repo root, the same folder `inference/live_view.py` uses. Three of them (`165859`, `171200`, `171939`) were made from a high camera position we call `steep`, one (`180049`) from a lower position we call `low`.
+1. `make_pair.py` cuts the two raw recordings into `videos/pair_<camera>.mp4`, clips that start on the same frame; the last number is the offset between them in frames (25 for our pair: the opposite camera started 0.83 s earlier, found from the robot's first movement). The recordings are not in git: copy them into `videos/` at the repo root. `180049` is the `low` camera position, `160049` the `opposite` one.
+2. `enrol_owner.py` records the owner's face from a short clip in which their face is visible (any single video; use a different stretch than the one you track). It shows the faces it found per id and asks which id is the owner.
+3. `track.py` takes the pair and the camera position of each video. Three windows open: the two camera views and a top-down room map. Positions go to `results/<start time>_positions.csv` at the repo root, one row per frame per tracked thing; every run writes a new file. Every frame is processed, so playback is slower than real time; `REALTIME` at the top of the file switches to dropping frames instead.
 
-## How positions become metres
+The environment is the shared one from the repo root (`uv sync`). The face models (about 280 MB) download into `~/.insightface` on first use.
 
-Pixels cannot be compared between frames or cameras, so every position is converted into room coordinates with a floor map: a 3×3 matrix, fitted once per camera position, that maps any pixel on the floor to metres from a fixed origin. The maps for both camera positions are in `calibration/` and are loaded by the scripts; nothing needs to be calibrated to run on the existing recordings. A new camera position needs a new map, made with `calibrate.py` as described in [calibration/README.md](calibration/README.md). The conversion is only valid for points on the floor, so a person's position is taken at the feet.
+## How it works
 
-## How the owner is recognised
+**Metres.** A floor map per camera position, a 3×3 matrix fitted once from clicked tile corners, turns any pixel on the floor into metres from a fixed origin; both maps (`low`, `opposite`) share that origin and are in `calibration/`. It is only valid for points on the floor, so a person is placed at the feet, or at the knees or hips when the feet are hidden. A new camera position needs a new map: [calibration/README.md](calibration/README.md).
 
-The owner is not identified by any fixed feature but enrolled per session. `enrol_owner.py` shows the people found in a short video of the owner, asks which one is the owner, and saves that person's appearance signature: vectors computed from their image by a person re-identification network, which describe clothing and build in a way that survives changes of posture and viewing angle. `track.py` compares every tracked person against the signature every half second. The best match above a threshold becomes the owner and keeps the label for as long as the track lives, even when the score drops while sitting or turning away; everyone else is a stranger. The signature depends on clothing, so enrolment is repeated when the owner or their clothes change. The owner file is not in git.
+**Merging.** Each camera tracks people on its own with ids that last while they stay in view. In room coordinates, a track within 0.6 m of a person known from the other camera is the same person; otherwise it is a new person. The position is the average of the cameras that see the feet. A camera that only sees someone's upper body, because they stand right in front of it, does not place them. The robot's box ends at its edge nearest the camera, so each camera's point is pushed back by the robot's radius before averaging. When one camera loses someone the other keeps them, and a track that comes back under a new id rejoins by position.
+
+**Owner.** Nobody is identified by a fixed feature; the owner is enrolled per session, by face. Whenever a person's face is turned to one of the cameras, the face is encoded and compared with the enrolled face vectors every half second; with two opposite cameras one of them usually sees it. The best match above a threshold becomes the owner and keeps the label while tracked, even with the face hidden; everyone else is a stranger. On our recordings the owner scores about 0.6 against his own faces and other people about 0.0. A track that scores like the owner is never merged with a person that scores like a stranger, however close they stand, and a track whose score stops matching its person leaves it, so an id swapped inside one camera is corrected at the next face check. A new person is only ever created from a track placed by the feet, and not from a box within 1.2 m of a person the same camera already tracks unless its face score says otherwise: that is a second box on the same person. A knee or hip point within a second of a foot point does not move anyone, because it lands up to a metre further from the camera. The owner file is not in git.
 
 ## Files
 
-- `track.py` – the tracking loop: people with persistent IDs, robot and ball, floor positions in metres, owner label, drawing. Playback follows the video clock, dropping frames when processing is slower than the recording.
-- `enrol_owner.py` – records who the owner is (see above); writes `owner.npz` and two check images.
-- `calibrate.py` – builds a floor map from clicked tile corners.
-- `common.py` – shared by the three scripts: paths, lens correction, people detection, floor map loading.
-- `sources.py` – frame sources: video file at real speed, or the Basler camera.
-- `appearance.py` – the appearance signature: encoder, similarity, owner file.
-- `calibration/` – lens correction files and the floor maps `steep` and `low`.
+- `track.py` – the tracking loop for a pair of videos: people per camera, merging, owner label, robot and ball, drawing, CSV.
+- `enrol_owner.py` – records who the owner is; writes `owner/` (face vectors and two check images, not in git).
+- `calibrate.py` – builds a floor map from clicked tile corners of `calibration/frames/<camera>.png`.
+- `tools/make_pair.py` – cuts two recordings into a synced pair.
+- `common.py` – shared: paths, lens correction, people detection, floor maps, keypoint names, room constants.
+- `faces.py` – face visibility from the pose keypoints, face vectors, similarity, the owner file.
+- `fusion.py` – merges the cameras' tracks into people and decides the owner.
+- `room_map.py` – the top-down drawing of the room.
+- `sources.py` – the video reader (one video paced, a second following it) and an unused Basler camera class kept from last year.
+- `calibration/` – lens correction files, the floor maps and the frames they were made from.
 - `models/yolo11s-pose.pt` – the pose model. Robot and ball weights are in `../training/runs/yolo26n_e30/weights/best.pt`.
-- `tools/basler_record_video.py` – records the camera to MP4, used for the recordings above.
+- `tools/basler_record_video.py` – the group's original recorder, unchanged; it made the recordings above.

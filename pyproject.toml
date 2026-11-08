@@ -1,7 +1,7 @@
 [project]
 name = "ei-human-tracking"
 version = "0.1.0"
-description = "YOLO fine-tuning (training/) and live inference (inference/) for robot and ball detection"
+description = "Robot and ball detection (training/, inference/) and two-camera tracking of people, owner, robot and ball in room coordinates (tracking/)"
 requires-python = ">=3.11"
 dependencies = [
     "opencv-python",
@@ -11,7 +11,8 @@ dependencies = [
     "torch",
     "torchvision",
     "lap",            # tracker (ByteTrack) dependency of ultralytics
-    "boxmot",         # person re-identification (owner recognition)
+    "insightface",    # face detection and recognition (owner recognition)
+    "onnxruntime",    # runs the InsightFace models
 ]
 
 [tool.uv.sources]

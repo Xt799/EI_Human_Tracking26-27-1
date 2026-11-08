@@ -1,4 +1,4 @@
-"""Paths, lens correction and people detection shared by the tracking scripts."""
+"""Shared by the tracking scripts: paths, lens correction, people detection, floor maps, keypoint names, room constants, the label drawer."""
 import os
 
 import cv2
@@ -9,9 +9,22 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CALIB_DIR = os.path.join(SCRIPT_DIR, "calibration")
 POSE_MODEL_PATH = os.path.join(SCRIPT_DIR, "models", "yolo11s-pose.pt")
 OBJECT_MODEL_PATH = os.path.join(SCRIPT_DIR, "..", "training", "runs", "yolo26n_e30", "weights", "best.pt")
+RESULTS_DIR = os.path.join(SCRIPT_DIR, "..", "results")   # one position CSV per run, named by the start time
 
 POSE_CONF = 0.25      # minimum confidence for a person box
 TRACKER = "bytetrack.yaml"
+KPT_CONF = 0.5        # a keypoint below this confidence is treated as not visible
+TRACK_TIMEOUT_S = 1.0 # a person or object not seen for this long is forgotten
+SMOOTH_ALPHA = 0.3    # weight of the newest value in a smoothed one (1 = no smoothing): track positions and learned camera offsets
+TILE_M = 0.198        # floor tiles, centre to centre: 19.4 cm tile + 0.4 cm gap
+
+# COCO keypoint indices of the pose model
+NOSE, LEFT_EYE, RIGHT_EYE = 0, 1, 2
+LEFT_HIP, RIGHT_HIP, LEFT_KNEE, RIGHT_KNEE, LEFT_ANKLE, RIGHT_ANKLE = 11, 12, 13, 14, 15, 16
+FOOT_SOURCES = ("ankles", "ankle")   # floor point sources from the feet; a knee or hip point lands up to a metre further from the camera
+
+# Colours (BGR) of the floor origin and axes, in the calibration overlay and on the room map
+ORIGIN_COLOUR, X_AXIS_COLOUR, Y_AXIS_COLOUR = (0, 0, 255), (255, 128, 0), (0, 255, 255)
 
 
 def lens_correction(width, height):
@@ -30,6 +43,7 @@ def camera_positions():
 
 
 def load_floor_map(camera):
+    """The 3x3 matrix of a camera position: pixel on the floor -> metres from the origin."""
     return np.load(os.path.join(CALIB_DIR, f"floor_map_{camera}.npy"))
 
 

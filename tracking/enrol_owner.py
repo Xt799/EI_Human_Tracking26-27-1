@@ -1,10 +1,11 @@
 """
-Record who the owner is, from a short video in which they are visible.
+Record who the owner is, from a short video in which their face is visible.
 
-    .venv\\Scripts\\python.exe tracking\\enrol_owner.py videos\\clips\\enrolment\\steep_a.mp4
+    uv run python tracking/enrol_owner.py videos/<clip with the owner's face>.mp4
 
-Writes tracking/owner.npz (the owner's appearance signature) and two images to check:
-enrol_candidates.jpg (everyone found, with their ids) and owner.jpg (the crops used).
+Use a different video than the one you track with, otherwise the recognition is not tested at all.
+Writes tracking/owner/: owner.npz (the owner's face vectors) and two images to check,
+enrol_candidates.jpg (everyone whose face was seen, with their ids) and owner.jpg (the faces used).
 """
 import argparse
 import os
@@ -12,57 +13,59 @@ import os
 import cv2
 import numpy as np
 
-from appearance import OWNER_FILE, AppearanceEncoder, save_owner
-from common import SCRIPT_DIR, PeopleDetector, lens_correction
+from common import PeopleDetector, lens_correction
+from faces import OWNER_DIR, OWNER_FILE, FaceEncoder, face_visible, save_owner
 
 FRAMES_PER_SEC = 3        # frames sampled per second of video
-MIN_CROPS = 5             # a person seen in fewer frames is not offered as a candidate
-N_EXTRA_VECTORS = 5       # posture variants stored next to the mean vector
-MIN_CROP_SIM = 0.6        # a crop less similar than this to the owner's mean is not the owner (tracker id swap) and is dropped
+MIN_FACES = 3             # a person with fewer face shots is not offered as a candidate
+MIN_FACE_SIM = 0.3        # a face less similar than this to the owner's mean is someone else (tracker id swap) and is dropped
 
 
-def collect_people(video):
-    """Tracks everyone in the video. Returns {id: [crop, ...]}."""
+def collect_faces(video):
+    """Tracks everyone in the video and encodes their face whenever it is turned to the camera. Returns {id: [(vector, face image), ...]}."""
     cap = cv2.VideoCapture(video)
     if not cap.isOpened():
         raise SystemExit(f"Could not open video: {video}")
     step = max(1, round((cap.get(cv2.CAP_PROP_FPS) or 30) / FRAMES_PER_SEC))
     correct = lens_correction(int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-    detector = PeopleDetector()
+    detector, encoder = PeopleDetector(), FaceEncoder()
     people = {}
     while True:
         ok, frame = cap.read()
         if not ok:
             break
         frame = correct(frame)
-        ids, boxes, _, _ = detector.detect(frame)
-        for tid, (x1, y1, x2, y2) in zip(ids, boxes.astype(int)):
-            if y2 - y1 >= 120 and x2 - x1 >= 40:     # skip people mostly out of frame
-                people.setdefault(int(tid), []).append(frame[y1:y2, x1:x2].copy())
+        ids, _, kxy, kconf = detector.detect(frame)
+        for tid, k, kc in zip(ids, kxy, kconf):
+            if face_visible(k, kc):
+                found = encoder.embed(frame, k)
+                if found is not None:
+                    people.setdefault(int(tid), []).append(found)
         for _ in range(step - 1):                   # skip ahead without decoding every frame
             cap.grab()
     cap.release()
-    return {tid: c for tid, c in people.items() if len(c) >= MIN_CROPS}
+    return {tid: f for tid, f in people.items() if len(f) >= MIN_FACES}
 
 
-def contact_sheet(crops, n=8):
-    """One row of up to n crops."""
-    tiles = [cv2.resize(c, (96, 192)) for c in crops[:: max(1, len(crops) // n)][:n]]
+def contact_sheet(faces, n=10, size=96):
+    """One row of up to n face images, spread over the whole list."""
+    tiles = [cv2.resize(f, (size, size)) for f in faces[:: max(1, len(faces) // n)][:n]]
     row = cv2.hconcat(tiles)
-    return cv2.copyMakeBorder(row, 0, 0, 0, n * 96 - row.shape[1], cv2.BORDER_CONSTANT, value=(40, 40, 40))
+    return cv2.copyMakeBorder(row, 0, 0, 0, n * size - row.shape[1], cv2.BORDER_CONSTANT, value=(40, 40, 40))
 
 
 def ask_owner_ids(people):
-    """Shows the candidates and asks which ids are the owner (several when the owner got a new id after leaving the frame)."""
+    """Shows the candidates' faces and asks which ids are the owner (several when the owner got a new id after leaving the frame)."""
     rows = []
-    for tid, crops in sorted(people.items()):
-        row = contact_sheet(crops)
-        cv2.putText(row, f"id {tid}  ({len(crops)} frames)", (4, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+    for tid, faces in sorted(people.items()):
+        row = contact_sheet([img for _, img in faces])
+        cv2.putText(row, f"id {tid}  ({len(faces)} faces)", (4, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
         rows.append(row)
-    sheet = os.path.join(SCRIPT_DIR, "enrol_candidates.jpg")
+    os.makedirs(OWNER_DIR, exist_ok=True)
+    sheet = os.path.join(OWNER_DIR, "enrol_candidates.jpg")
     cv2.imwrite(sheet, cv2.vconcat(rows))
     print(f"People found: {sorted(people)}. Open {sheet} to see them.")
-    print("The same person can appear under several ids; type all of them, e.g.  1 7")
+    print("The same person can appear under several ids; type all of them, e.g.  1 5")
     while True:
         try:
             ids = sorted({int(x) for x in input("Which id(s) is the owner? ").split()})
@@ -74,31 +77,30 @@ def ask_owner_ids(people):
 
 
 def signature_of(vecs):
-    """Mean vector plus the N_EXTRA_VECTORS least typical crops (other postures), after dropping crops that are not the same person."""
+    """The owner's mean vector plus every face at least MIN_FACE_SIM like it; less similar faces are someone else."""
     mean = vecs.mean(0)
     mean /= np.linalg.norm(mean)
     sims = vecs @ mean
-    print(f"Similarity of the crops to their mean: min {sims.min():.2f}, mean {sims.mean():.2f}; {int((sims < MIN_CROP_SIM).sum())} crop(s) below {MIN_CROP_SIM} dropped")
-    vecs, sims = vecs[sims >= MIN_CROP_SIM], sims[sims >= MIN_CROP_SIM]
-    mean = vecs.mean(0)
+    print(f"Similarity of the faces to their mean: min {sims.min():.2f}, mean {sims.mean():.2f}; {int((sims < MIN_FACE_SIM).sum())} face(s) below {MIN_FACE_SIM} dropped")
+    keep = vecs[sims >= MIN_FACE_SIM]
+    if len(keep) == 0:
+        raise SystemExit("The chosen id's faces do not agree with each other; pick a cleaner clip or another id.")
+    mean = keep.mean(0)
     mean /= np.linalg.norm(mean)
-    extra = vecs[np.argsort(sims)[:N_EXTRA_VECTORS]]
-    return np.vstack([mean, extra]).astype(np.float32)
+    return np.vstack([mean, keep]).astype(np.float32)
 
 
 def main(video):
-    people = collect_people(video)
+    people = collect_faces(video)
     if not people:
-        raise SystemExit("Nobody was tracked long enough in this video.")
-    crops = [c for i in ask_owner_ids(people) for c in people[i]]
-    encoder = AppearanceEncoder()
-    vecs = np.array([encoder.embed(c, (0, 0, c.shape[1], c.shape[0])) for c in crops])
-    save_owner(signature_of(vecs), [os.path.basename(video)])
-    cv2.imwrite(os.path.join(SCRIPT_DIR, "owner.jpg"), contact_sheet(crops, 12))
-    print(f"Owner enrolled from {len(crops)} crops: {OWNER_FILE}")
+        raise SystemExit("Nobody's face was seen often enough in this video.")
+    faces = [f for i in ask_owner_ids(people) for f in people[i]]
+    save_owner(signature_of(np.array([vec for vec, _ in faces])), os.path.basename(video))
+    cv2.imwrite(os.path.join(OWNER_DIR, "owner.jpg"), contact_sheet([img for _, img in faces], 16))
+    print(f"Owner enrolled from {len(faces)} face shots: {OWNER_FILE}")
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
-    ap.add_argument("video", help="video with the owner in view (a short clip is best)")
+    ap.add_argument("video", help="video with the owner's face in view (a short clip is best)")
     main(ap.parse_args().video)

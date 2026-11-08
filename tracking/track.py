@@ -1,54 +1,56 @@
 """
-Track people (owner / stranger), robot and ball and show their floor positions in metres.
+Track people (owner / stranger), robot and ball from two cameras and show where they are in the room.
 
-    .venv\\Scripts\\python.exe tracking\\track.py videos\\clips\\tracking\\steep_a.mp4 steep
-    .venv\\Scripts\\python.exe tracking\\track.py camera low        # live Basler camera
+    uv run python tracking/track.py videos/pair_low.mp4 low videos/pair_opposite.mp4 opposite
 
-Keys: q or Esc quit, p pause, c continue.
+The two videos must be simultaneous recordings of the same scene, starting on the same frame (tools/make_pair.py).
+REALTIME below chooses between dropping frames to keep the video's pace and processing every frame.
+Keys: q or Esc quit, p pause, c continue. Positions are also written to results/<start time>_positions.csv.
 """
 import argparse
+import csv
+import os
 import time
 
 import cv2
 import numpy as np
 from ultralytics import YOLO
 
-from appearance import AppearanceEncoder, load_owner, similarity
-from common import OBJECT_MODEL_PATH, PeopleDetector, camera_positions, lens_correction, load_floor_map, put_label
-from sources import open_source
+from common import (FOOT_SOURCES, KPT_CONF, LEFT_ANKLE, LEFT_HIP, LEFT_KNEE, OBJECT_MODEL_PATH, RESULTS_DIR, RIGHT_ANKLE, RIGHT_HIP, RIGHT_KNEE, SMOOTH_ALPHA,
+                    TILE_M, TRACK_TIMEOUT_S, PeopleDetector, camera_positions, lens_correction, load_floor_map, put_label)
+from faces import FaceEncoder, face_visible, load_owner, similarity
+from fusion import Fusion, compatible
+from room_map import RoomMap
+from sources import VideoSource
 
 # ---- Settings ----
-KPT_CONF = 0.5                 # a keypoint below this confidence is treated as not visible
+REALTIME = False                # True: drop frames to keep the video's pace, as a live camera would; False: every frame, slower than real time
+OBJECTS = ("robot", "ball")    # classes of the object detector that we track
 OBJECT_CONF = 0.5              # minimum confidence for a robot / ball box
 OBJECT_IMGSZ = 1920            # detector input size; 2560 finds the far-away ball better but is slower
-SMOOTH_ALPHA = 0.3             # weight of the newest position in the smoothed one (1 = no smoothing)
-TRACK_TIMEOUT_S = 1.0          # a person or object not seen for this long is forgotten
-FLOOR_BOUNDS_M = ((-5.0, 4.0), (-3.0, 5.5))   # positions outside the room are rejected (detections on walls)
-DISPLAY_SCALE = 0.6
+OBJECT_RADIUS_M = {"robot": 0.20}   # the bottom of a box is the edge nearest the camera; the object's centre is this much further away
+CAMERA_STEP_PX = 20            # a step this far straight down in the image points towards the camera on the floor
+ROOM_M = ((-2.84, 2.48), (-3.07, 3.04))   # the walls, metres from the red cross: 14 1/3 and 12 1/2 tiles along x, 15 1/2 and 15 1/3 along y (5.3 x 6.1 m)
+WALL_SLACK_M = 0.2             # a position this far beyond a wall still counts; further out is a detection on the wall
+EDGE_PX = 10                   # a box reaching this close to the bottom of the frame has its feet cut off
+HOLD_FEET_S = 1.0              # a knee or hip point this soon after a foot point keeps the foot position: it would be up to a metre off
+DISPLAY_SCALE = 0.4
+FACE_EVERY_S = 0.5             # how often a person whose face is turned to a camera is compared with the owner (thresholds in fusion.py)
 
-# Owner recognition (needs tracking/owner.npz from enrol_owner.py)
-REID_EVERY_S = 0.5             # how often each person is compared against the owner signature
-OWNER_SIM = 0.80               # running similarity at or above this: owner candidate
-STRANGER_SIM = 0.70            # running similarity below this: stranger
-OWNER_CHECKS = 3               # comparisons needed before a person gets a label
-OWNER_SWITCH_MARGIN = 0.05     # another person must beat the current owner by this much to take over
-
-# COCO keypoints
-LEFT_HIP, RIGHT_HIP, LEFT_KNEE, RIGHT_KNEE, LEFT_ANKLE, RIGHT_ANKLE = 11, 12, 13, 14, 15, 16
+# Drawing
 LEFT_KPTS = {1, 3, 5, 7, 9, 11, 13, 15}
 SKELETON = [(5, 7), (7, 9), (6, 8), (8, 10), (11, 13), (13, 15), (12, 14), (14, 16), (5, 6), (11, 12), (5, 11), (6, 12)]
-
-# Colours (BGR)
 LABEL_COLOUR = {"unknown": (200, 200, 200), "owner": (255, 0, 0), "stranger": (0, 255, 255), "robot": (0, 200, 255), "ball": (0, 255, 0)}
 LEFT_COLOUR, RIGHT_COLOUR, BONE_COLOUR, DOT_COLOUR = (0, 0, 255), (0, 255, 0), (220, 220, 220), (255, 255, 255)
 
 
 # ---- Floor positions ----
 def to_metres(H, point_px):
-    """Pixel point on the floor -> (x, y) metres, or None if it lands outside the room."""
+    """Pixel point on the floor -> (x, y) metres, or None if it lands beyond the walls (a detection on a wall)."""
     m = cv2.perspectiveTransform(np.asarray(point_px, np.float32).reshape(1, 1, 2), H)[0, 0]
-    (x0, x1), (y0, y1) = FLOOR_BOUNDS_M
-    return m if x0 <= m[0] <= x1 and y0 <= m[1] <= y1 else None
+    (x0, x1), (y0, y1) = ROOM_M
+    s = WALL_SLACK_M
+    return m if x0 - s <= m[0] <= x1 + s and y0 - s <= m[1] <= y1 + s else None
 
 
 def person_floor_point(kxy, kconf):
@@ -63,108 +65,135 @@ def person_floor_point(kxy, kconf):
 
 
 def box_floor_point(xyxy):
-    """Where a boxed object touches the floor: bottom centre of the box (for the robot its near edge, ~15 cm towards the camera)."""
+    """Where a boxed object touches the floor: bottom centre of the box, which is the object's edge nearest the camera."""
     x1, y1, x2, y2 = xyxy
     return np.array([(x1 + x2) / 2, y2], np.float32)
 
 
-class Track:
-    """A tracked object: smoothed floor position and when it was last seen."""
+def towards_camera(H, point_px):
+    """Unit vector on the floor (metres) pointing from this point towards the camera: straight down in the image."""
+    a = cv2.perspectiveTransform(np.asarray(point_px, np.float32).reshape(1, 1, 2), H)[0, 0]
+    b = cv2.perspectiveTransform((np.asarray(point_px, np.float32) + (0, CAMERA_STEP_PX)).reshape(1, 1, 2), H)[0, 0]
+    return (b - a) / np.linalg.norm(b - a)
 
-    def __init__(self, label):
-        self.label = label
+
+class Track:
+    """A tracked object: smoothed floor position, when it was last placed and when it was last seen."""
+
+    def __init__(self):
         self.floor_m = None
         self.source = None           # which keypoints or box edge gave the floor point
-        self.last_seen = 0.0
+        self.placed = None           # time of the last position update
+        self.last_seen = 0.0         # time of the last detection, placed or not
 
     def update_position(self, floor_m, source, t):
+        """Moves the smoothed position towards the new measurement."""
         self.floor_m = floor_m if self.floor_m is None else SMOOTH_ALPHA * floor_m + (1 - SMOOTH_ALPHA) * self.floor_m
         self.source = source
+        self.placed = t
         self.last_seen = t
 
 
 class Person(Track):
-    """A tracked person: a Track plus the running similarity to the owner. Label: unknown, owner or stranger."""
+    """A person tracked by one camera: a Track plus the running face similarity to the owner."""
 
     def __init__(self):
-        super().__init__("unknown")
+        super().__init__()
         self.sim = None
         self.checks = 0
         self.last_check = -1e9
+        self.feet_at = -1e9          # time of the last placement by the feet
 
-    def compare(self, vec, signature, t):
+    def update_position(self, floor_m, source, t):
+        """As Track, except that a knee or hip point within HOLD_FEET_S of a foot point keeps the foot position."""
+        if source in FOOT_SOURCES:
+            self.feet_at = t
+        elif t - self.feet_at <= HOLD_FEET_S:
+            self.placed = self.last_seen = t
+            return
+        super().update_position(floor_m, source, t)
+
+    def compare(self, vec, signature):
+        """Folds one face comparison into the running similarity. A score that contradicts it restarts it: the track now follows someone else."""
         s = similarity(vec, signature)
-        self.sim = s if self.sim is None else (s + self.sim) / 2
+        self.sim = (s + self.sim) / 2 if self.sim is not None and compatible(s, self.sim) else s
         self.checks += 1
-        self.last_check = t
 
 
-# ---- Owner / stranger ----
-def decide_labels(people):
-    """One owner at most: the best match above OWNER_SIM. An owner keeps the label while the track lives unless clearly beaten."""
-    judged = [p for p in people if p.checks >= OWNER_CHECKS]
-    if not judged:
-        return
-    current = next((p for p in judged if p.label == "owner"), None)
-    best = max(judged, key=lambda p: p.sim)
-    takes_over = current is None or best is current or best.sim > current.sim + OWNER_SWITCH_MARGIN
-    owner = best if best.sim >= OWNER_SIM and takes_over else current
-    for p in judged:
-        if p is owner:
-            p.label = "owner"
-        elif owner is not None or p.sim < STRANGER_SIM:
-            p.label = "stranger"
-        else:
-            p.label = "unknown"
+class Camera:
+    """One camera: its video, floor map, detector, the people it tracks and the last frame."""
+
+    def __init__(self, video, name):
+        self.name = name
+        self.source = VideoSource(video)
+        self.H = load_floor_map(name)
+        self.detector = PeopleDetector()
+        self.correct = None
+        self.people = {}
+        self.frame = None
+
+    def read(self, index=None):
+        """Reads the next frame (paced to real time), or the frame with the given index. False at the end of the video."""
+        raw = self.source.read() if index is None else self.source.read_at(index)
+        if raw is None:
+            return False
+        if self.correct is None:
+            self.correct = lens_correction(raw.shape[1], raw.shape[0])
+        self.frame = self.correct(raw)
+        return True
 
 
 # ---- Per-frame steps ----
-def update_people(people, detector, encoder, signature, frame, H, t):
-    """Detect people, update their tracks, compare with the owner. Returns what to draw: (id, box, kxy, kconf, floor point)."""
-    ids, boxes, kxy, kconf = detector.detect(frame)
+def update_people(camera, encoder, signature, t):
+    """Detect people in the camera's frame, update its tracks, compare faces with the owner. Returns what to draw: (id, box, kxy, kconf, floor point)."""
+    ids, boxes, kxy, kconf = camera.detector.detect(camera.frame)
     seen = []
     for i, tid in enumerate(ids):
-        person = people.setdefault(tid, Person())
+        person = camera.people.setdefault(tid, Person())
         pt, source = person_floor_point(kxy[i], kconf[i])
-        m = to_metres(H, pt) if pt is not None else None
+        feet_cut_off = source not in ("ankles", "ankle") and boxes[i][3] >= camera.frame.shape[0] - EDGE_PX
+        m = to_metres(camera.H, pt) if pt is not None and not feet_cut_off else None
         if m is not None:
             person.update_position(m, source, t)
+        elif feet_cut_off:
+            person.floor_m = None        # too close to this camera to be placed by it; the other camera will
         person.last_seen = t
-        if encoder is not None and t - person.last_check >= REID_EVERY_S:
-            person.compare(encoder.embed(frame, boxes[i]), signature, t)
+        if encoder is not None and t - person.last_check >= FACE_EVERY_S and face_visible(kxy[i], kconf[i]):
+            person.last_check = t        # counts as a try even if no face is found in the crop
+            found = encoder.embed(camera.frame, kxy[i])
+            if found is not None:
+                person.compare(found[0], signature)
         seen.append((tid, boxes[i], kxy[i], kconf[i], pt))
-    for tid in [k for k, p in people.items() if t - p.last_seen > TRACK_TIMEOUT_S]:
-        del people[tid]
-    if encoder is not None:
-        decide_labels(people.values())      # all live tracks, so a person missed for one frame keeps their label
+    for tid in [k for k, p in camera.people.items() if t - p.last_seen > TRACK_TIMEOUT_S]:
+        del camera.people[tid]
     return seen
 
 
-def update_objects(objects, model, frame, H, t):
-    """Detect robot and ball (best box per class), update their tracks. Returns what to draw: (name, box, conf, floor point)."""
-    r = model(frame, imgsz=OBJECT_IMGSZ, conf=OBJECT_CONF, agnostic_nms=True, verbose=False)[0]
+def detect_objects(camera, model):
+    """Robot and ball in the camera's frame, best box per class. Returns {name: (box, conf, floor point, metres)}."""
+    r = model(camera.frame, imgsz=OBJECT_IMGSZ, conf=OBJECT_CONF, agnostic_nms=True, verbose=False)[0]
     best = {}
     for xyxy, conf, cls in zip(r.boxes.xyxy.cpu().numpy(), r.boxes.conf.cpu().numpy(), r.boxes.cls.cpu().numpy().astype(int)):
         name = model.names[cls]
-        if name in objects and conf > best.get(name, (None, 0))[1]:
+        if name in OBJECTS and conf > best.get(name, (None, 0))[1]:
             best[name] = (xyxy, float(conf))
-    seen = []
+    found = {}
     for name, (xyxy, conf) in best.items():
         pt = box_floor_point(xyxy)
-        m = to_metres(H, pt)
+        m = to_metres(camera.H, pt)
         if m is not None:
-            objects[name].update_position(m, "box", t)
-            seen.append((name, xyxy, conf, pt))
-    for obj in objects.values():
-        if t - obj.last_seen > TRACK_TIMEOUT_S:
-            obj.floor_m = None
-    return seen
+            m = m - OBJECT_RADIUS_M.get(name, 0.0) * towards_camera(camera.H, pt)   # from the near edge to the centre
+            found[name] = (xyxy, conf, pt, m)
+    return found
 
 
-def draw_person(canvas, person, tid, box, kxy, kconf, pt):
+def draw_person(canvas, fused, tid, box, kxy, kconf, pt, person):
+    """Box in the label's colour, joints and bones, the floor point and the metre position of one person."""
     x1, y1, x2, y2 = box.astype(int)
-    cv2.rectangle(canvas, (x1, y1), (x2, y2), LABEL_COLOUR[person.label], 2)
-    put_label(canvas, f"id {tid}  {person.label}" + (f"  {person.sim:.2f}" if person.sim is not None else ""), (x1, y1 - 6))
+    label = fused.label if fused is not None else "unknown"
+    who = f"P{fused.id} {label}" if fused is not None else "unknown"
+    cv2.rectangle(canvas, (x1, y1), (x2, y2), LABEL_COLOUR[label], 2)
+    put_label(canvas, who + (f"  {person.sim:.2f}" if person.sim is not None else "") + f"  track {tid}", (x1, y1 - 6))
     visible = kconf >= KPT_CONF
     for k, (px, py) in enumerate(kxy):
         if visible[k]:
@@ -179,67 +208,88 @@ def draw_person(canvas, person, tid, box, kxy, kconf, pt):
         put_label(canvas, f"x {person.floor_m[0]:.2f} m  y {person.floor_m[1]:.2f} m  ({person.source})", (at[0] + 10, at[1] - 10))
 
 
-def draw_object(canvas, obj, name, box, conf, pt):
+def draw_object(canvas, name, box, conf, pt, m):
+    """Box, floor point and metre position of the robot or the ball."""
     x1, y1, x2, y2 = box.astype(int)
     cv2.rectangle(canvas, (x1, y1), (x2, y2), LABEL_COLOUR[name], 2)
     cv2.circle(canvas, tuple(pt.astype(int)), 6, DOT_COLOUR, -1)
-    put_label(canvas, f"{name} {conf:.2f}  x {obj.floor_m[0]:.2f} m  y {obj.floor_m[1]:.2f} m", (x1, y1 - 6))
+    put_label(canvas, f"{name} {conf:.2f}  x {m[0]:.2f} m  y {m[1]:.2f} m", (x1, y1 - 6))
 
 
 # ---- Main loop ----
-def main(video, camera):
-    detector = PeopleDetector()
+def main(video_a, camera_a, video_b, camera_b):
+    cameras = [Camera(video_a, camera_a), Camera(video_b, camera_b)]
     object_model = YOLO(OBJECT_MODEL_PATH)
-    signature, owner_videos = load_owner()
-    encoder = AppearanceEncoder() if signature is not None else None
-    print(f"Owner enrolled from: {', '.join(owner_videos)}" if encoder else "No owner enrolled: everyone is 'unknown'.")
+    signature, owner_video = load_owner()
+    encoder = FaceEncoder() if signature is not None else None
+    print(f"Owner enrolled from: {owner_video}" if encoder else "No owner enrolled: everyone is 'unknown'.")
+    print(f"Inputs: {video_a} ({camera_a}), {video_b} ({camera_b})")
 
-    source = open_source(video)
-    first = source.read()
-    if first is None:
-        raise SystemExit("Could not read the first frame.")
-    correct = lens_correction(first.shape[1], first.shape[0])
-    H = load_floor_map(camera)
-    print(f"Input: {video}, floor map: {camera}")
+    room = RoomMap(ROOM_M, TILE_M)
+    fusion, objects = Fusion(), {name: Track() for name in OBJECTS}
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    log_path = os.path.join(RESULTS_DIR, time.strftime("%Y%m%d_%H%M%S") + "_positions.csv")
+    log = open(log_path, "w", newline="")
+    writer = csv.writer(log)
+    writer.writerow(["frame", "t", "kind", "id", "label", "x", "y", "cameras", "source", "sim"])
+    print(f"Positions are logged to {log_path}")
 
-    people, objects = {}, {"robot": Track("robot"), "ball": Track("ball")}
-    window = "Tracking"
-    cv2.namedWindow(window, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
-    cv2.resizeWindow(window, int(first.shape[1] * DISPLAY_SCALE), int(first.shape[0] * DISPLAY_SCALE))
-    fps, n_frames, fps_t0 = 0.0, 0, time.time()
-    frame, paused = first, False
-    source.resync()
+    windows_placed, fps, n_frames, fps_t0, paused = False, 0.0, 0, time.time(), False
     try:
         while True:
             if paused:
                 key = cv2.waitKey(50) & 0xFF
                 if key in (ord("c"), ord("p")):
                     paused = False
-                    source.resync()
+                    cameras[0].source.resync()
                 elif key in (27, ord("q")):
                     break
                 continue
-            frame = frame if frame is not None else source.read()
-            if frame is None:
+            if not cameras[0].read(None if REALTIME else cameras[0].source.index() + 1) or not cameras[1].read(cameras[0].source.index()):
                 break
-            frame = correct(frame)
-            t = source.time()
+            frame_index, t = cameras[0].source.index(), cameras[0].source.time()
 
-            seen_people = update_people(people, detector, encoder, signature, frame, H, t)
-            seen_objects = update_objects(objects, object_model, frame, H, t)
+            seen = {cam.name: update_people(cam, encoder, signature, t) for cam in cameras}
+            links = fusion.update({cam.name: cam.people for cam in cameras}, t)
+            if encoder is not None:
+                fusion.decide_labels()
+            found = {cam.name: detect_objects(cam, object_model) for cam in cameras}
+            for name, obj in objects.items():
+                points = [found[cam][name][3] for cam in found if name in found[cam]]
+                if points:
+                    obj.update_position(np.mean(points, axis=0), "box", t)
+                elif t - obj.last_seen > TRACK_TIMEOUT_S:
+                    obj.floor_m = None
 
-            canvas = frame.copy()
-            for tid, box, kxy, kconf, pt in seen_people:
-                draw_person(canvas, people[tid], tid, box, kxy, kconf, pt)
-            for name, box, conf, pt in seen_objects:
-                draw_object(canvas, objects[name], name, box, conf, pt)
+            for p in fusion.people.values():
+                if p.last_seen == t:
+                    writer.writerow([frame_index, f"{t:.3f}", "person", f"P{p.id}", p.label, f"{p.floor_m[0]:.3f}", f"{p.floor_m[1]:.3f}",
+                                     "+".join(sorted(p.members)), p.source, "" if p.sim is None else f"{p.sim:.2f}"])
+            for name, obj in objects.items():
+                if obj.placed == t:
+                    writer.writerow([frame_index, f"{t:.3f}", name, name, name, f"{obj.floor_m[0]:.3f}", f"{obj.floor_m[1]:.3f}",
+                                     "+".join(sorted(cam for cam in found if name in found[cam])), "box", ""])
+
             n_frames += 1
             if time.time() - fps_t0 >= 1.0:
                 fps, n_frames, fps_t0 = n_frames / (time.time() - fps_t0), 0, time.time()
-            visible_objects = " ".join(n for n, o in objects.items() if o.floor_m is not None) or "-"
-            put_label(canvas, f"{camera} | people {len(seen_people)} | tracks {len(people)} | objects {visible_objects} | {fps:.1f} fps", (14, 36), bg=(230, 230, 230))
-            cv2.imshow(window, cv2.resize(canvas, (0, 0), fx=DISPLAY_SCALE, fy=DISPLAY_SCALE))
-            frame = None
+            for cam in cameras:
+                canvas = cam.frame.copy()
+                for tid, box, kxy, kconf, pt in seen[cam.name]:
+                    draw_person(canvas, links.get((cam.name, tid)), tid, box, kxy, kconf, pt, cam.people[tid])
+                for name, (box, conf, pt, m) in found[cam.name].items():
+                    draw_object(canvas, name, box, conf, pt, m)
+                put_label(canvas, f"{cam.name} | people {len(seen[cam.name])} | {t:.1f} s | {fps:.1f} fps", (14, 36), bg=(230, 230, 230))
+                cv2.imshow(cam.name, cv2.resize(canvas, (0, 0), fx=DISPLAY_SCALE, fy=DISPLAY_SCALE))
+            marks = [(p.floor_m, LABEL_COLOUR[p.label], f"P{p.id} {p.label}", p.trail) for p in fusion.people.values() if p.floor_m is not None]
+            marks += [(obj.floor_m, LABEL_COLOUR[name], name, []) for name, obj in objects.items() if obj.floor_m is not None]
+            cv2.imshow("Room", room.draw(marks))
+            if not windows_placed:
+                h = int(cameras[0].frame.shape[0] * DISPLAY_SCALE)
+                cv2.moveWindow(cameras[0].name, 0, 0)
+                cv2.moveWindow(cameras[1].name, 0, h + 40)
+                cv2.moveWindow("Room", int(cameras[0].frame.shape[1] * DISPLAY_SCALE) + 10, 0)
+                windows_placed = True
 
             key = cv2.waitKey(1) & 0xFF
             if key in (27, ord("q")):
@@ -248,13 +298,17 @@ def main(video, camera):
     except KeyboardInterrupt:
         pass
     finally:
-        source.close()
+        log.close()
+        for cam in cameras:
+            cam.source.close()
         cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
-    ap.add_argument("video", help="video file, or 'camera' for the live Basler camera")
-    ap.add_argument("camera", choices=camera_positions(), help="camera position the video was recorded from (selects the floor map)")
+    ap.add_argument("video_a", help="first video file")
+    ap.add_argument("camera_a", choices=camera_positions(), help="camera position of the first video (selects its floor map)")
+    ap.add_argument("video_b", help="second video file, recorded at the same time")
+    ap.add_argument("camera_b", choices=camera_positions(), help="camera position of the second video")
     a = ap.parse_args()
-    main(a.video, a.camera)
+    main(a.video_a, a.camera_a, a.video_b, a.camera_b)

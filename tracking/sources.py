@@ -15,6 +15,7 @@ class VideoSource:
             raise SystemExit(f"Could not open video: {path}")
         self.fps = self.cap.get(cv2.CAP_PROP_FPS) or 30.0
         self.clock_start = None       # wall time of video time 0
+        self.last = None              # last frame returned by read_at
 
     def read(self):
         """Next frame to process, or None at the end of the video."""
@@ -29,9 +30,25 @@ class VideoSource:
         ok, frame = self.cap.read()
         return frame if ok else None
 
+    def read_at(self, index):
+        """The frame with this index, skipping forward to it (a second video following the first one). None at the end."""
+        while self.index() < index - 1:
+            if not self.cap.grab():
+                return None
+        if self.index() == index - 1:
+            ok, frame = self.cap.read()
+            if not ok:
+                return None
+            self.last = frame
+        return self.last                  # already past it: the same frame again
+
+    def index(self):
+        """Index of the last frame returned."""
+        return int(self.cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
+
     def time(self):
         """Video time of the last frame returned, in seconds."""
-        return (self.cap.get(cv2.CAP_PROP_POS_FRAMES) - 1) / self.fps
+        return self.index() / self.fps
 
     def resync(self):
         """Restart the clock from the current frame, e.g. after a pause."""

@@ -7,6 +7,7 @@ screenshot_*.png
 
 # large / generated / downloadable
 videos/
+results/
 training/ds_full/
 training/ds_eval/
 *.pt
@@ -34,6 +35,4 @@ videos/*
 !videos/.gitkeep
 
 # owner enrolment output: personal, per session
-tracking/owner.npz
-tracking/owner.jpg
-tracking/enrol_candidates.jpg
+tracking/owner/

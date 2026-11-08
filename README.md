@@ -14,6 +14,7 @@ uv sync                                        # once, shared .venv (CUDA 12.8 t
 uv run python inference/live_view.py --video <video.mp4>   # live view
 ```
 Training pipeline, data and results: [training/README.md](training/README.md).
+Emberek (tulajdonos / idegen), robot és labda követése két kamerából, méterben: [tracking/README.md](tracking/README.md).
 
 - `training/runs/yolo26n_e100/weights/best.pt` – the trained model.
 - The pretrained `yolo26n.pt` is downloaded automatically on the first training run (`training/`).
