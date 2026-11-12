@@ -1,10 +1,12 @@
-"""Top-down drawing of the room: the tile grid, the origin and one dot per person and object."""
+"""Top-down drawing of the room: the tile grid, the origin and one dot per person and object, with an arrow for the way a person faces."""
 import cv2
 import numpy as np
 
 from common import ORIGIN_COLOUR, X_AXIS_COLOUR, Y_AXIS_COLOUR
 
 PX_PER_M = 80
+ARROW_M = 0.5        # length of a heading arrow
+OUTLINE = (60, 60, 60)
 MARGIN_PX = 30
 BACKGROUND, GRID, GRID_BOLD, WALL = (245, 245, 245), (215, 215, 215), (175, 175, 175), (80, 80, 80)
 
@@ -33,13 +35,20 @@ class RoomMap:
         return int(MARGIN_PX + (xy[0] - self.x0) * PX_PER_M), int(MARGIN_PX + (xy[1] - self.y0) * PX_PER_M)
 
     def draw(self, marks):
-        """marks: (position in metres, colour, text, trail of positions) per thing to show. Returns the canvas."""
+        """marks: (position in metres, colour, text, trail of positions, heading unit vector or None) per thing to show. Returns the canvas."""
         canvas = self.background.copy()
-        for xy, colour, text, trail in marks:
+        for xy, colour, text, trail, heading in marks:
             if len(trail) > 1:
                 cv2.polylines(canvas, [np.array([self.to_px(q) for q in trail], np.int32)], False, colour, 1, cv2.LINE_AA)
             p = self.to_px(xy)
+            if heading is not None:
+                tip = self.to_px(np.asarray(xy) + ARROW_M * np.asarray(heading))
+                cv2.arrowedLine(canvas, p, tip, OUTLINE, 5, cv2.LINE_AA, tipLength=0.3)
+                cv2.arrowedLine(canvas, p, tip, colour, 3, cv2.LINE_AA, tipLength=0.3)
             cv2.circle(canvas, p, 8, colour, -1, cv2.LINE_AA)
-            cv2.circle(canvas, p, 8, (60, 60, 60), 1, cv2.LINE_AA)
-            cv2.putText(canvas, text, (p[0] + 11, p[1] + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (30, 30, 30), 1, cv2.LINE_AA)
+            cv2.circle(canvas, p, 8, OUTLINE, 1, cv2.LINE_AA)
+            x = p[0] + 11
+            if heading is not None and heading[0] > 0.5:   # the arrow points right: the text goes on the left of the dot
+                x = p[0] - 11 - cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0][0]
+            cv2.putText(canvas, text, (x, p[1] + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (30, 30, 30), 1, cv2.LINE_AA)
         return canvas

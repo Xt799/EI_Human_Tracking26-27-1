@@ -4,6 +4,7 @@ from collections import deque
 import numpy as np
 
 from common import FOOT_SOURCES, SMOOTH_ALPHA, TRACK_TIMEOUT_S
+from orientation import HEADING_HOLD_S, combine
 
 ATTACH_M = 0.6       # a new track joins a person this close that has no live track from its camera (both placed by the feet)
 ATTACH_LOOSE_M = 1.2 # the same when one of them is placed by the knees or hips, which can be half a metre off
@@ -45,6 +46,8 @@ class FusedPerson:
         self.offset = {}             # camera -> its point minus the two-camera average, learned while both cameras see the person
         self.apart_since = None
         self.trail = deque(maxlen=TRAIL_N)
+        self.heading = None          # unit vector on the floor the body faces: the cameras' headings, weighted (orientation.py)
+        self.heading_at = -1e9
 
 
 class Fusion:
@@ -129,6 +132,12 @@ class Fusion:
                 p.source = tr.source if len({tr.source for tr in feet.values()}) == 1 else "mixed"
                 p.trail.append(p.floor_m)
                 p.last_seen = t
+            measured = [(tr.heading, tr.heading_w) for tr in tracks.values() if tr.heading is not None and tr.heading_at == t]
+            heading = combine(measured)
+            if heading is not None:
+                p.heading, p.heading_at = heading, t
+            elif t - p.heading_at > HEADING_HOLD_S:
+                p.heading = None
             sims = [tr.sim for tr in tracks.values() if tr.sim is not None]
             if sims:
                 p.sim = max(sims)

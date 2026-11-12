@@ -16,10 +16,12 @@ TRACKER = "bytetrack.yaml"
 KPT_CONF = 0.5        # a keypoint below this confidence is treated as not visible
 TRACK_TIMEOUT_S = 1.0 # a person or object not seen for this long is forgotten
 SMOOTH_ALPHA = 0.3    # weight of the newest value in a smoothed one (1 = no smoothing): track positions and learned camera offsets
+CAMERA_STEP_PX = 20  # a step this far straight down in the image points towards the camera on the floor
 TILE_M = 0.198        # floor tiles of the lab (low / opposite), centre to centre: 19.4 cm tile + 0.4 cm gap
 
 # COCO keypoint indices of the pose model
 NOSE, LEFT_EYE, RIGHT_EYE = 0, 1, 2
+LEFT_SHOULDER, RIGHT_SHOULDER = 5, 6
 LEFT_HIP, RIGHT_HIP, LEFT_KNEE, RIGHT_KNEE, LEFT_ANKLE, RIGHT_ANKLE = 11, 12, 13, 14, 15, 16
 FOOT_SOURCES = ("ankles", "ankle")   # floor point sources from the feet; a knee or hip point lands up to a metre further from the camera
 
@@ -61,6 +63,13 @@ def load_room(cameras):
     rooms = np.array([info["room_m"] for info in infos], float)          # camera, axis, (lo, hi)
     room = tuple((float(rooms[:, k, 0].min()), float(rooms[:, k, 1].max())) for k in range(2))
     return room, float(infos[0].get("grid_m", 0.5))
+
+
+def towards_camera(H, point_px):
+    """Unit vector on the floor (metres) pointing from this point towards the camera: straight down in the image."""
+    a = cv2.perspectiveTransform(np.asarray(point_px, np.float32).reshape(1, 1, 2), H)[0, 0]
+    b = cv2.perspectiveTransform((np.asarray(point_px, np.float32) + (0, CAMERA_STEP_PX)).reshape(1, 1, 2), H)[0, 0]
+    return (b - a) / np.linalg.norm(b - a)
 
 
 class PeopleDetector:
