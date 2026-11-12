@@ -36,3 +36,7 @@ videos/*
 
 # owner enrolment output: personal, per session
 tracking/owner/
+
+# setup files, not needed for everyone
+basler_record_video.py
+new_with_pub_.py

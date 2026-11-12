@@ -5,20 +5,22 @@ Two fixed cameras in opposite corners of the lab record the room at the same tim
 ## Running
 
 ```
-uv run python tracking/tools/make_pair.py videos/basler_record_20261012_180049.mp4 low videos/AAA_basler_record_20261012_160049_FIXED.mp4 opposite 25
+uv run python tracking/calibrate.py a1 b1 --video videos/a1.mp4 videos/b1.mp4 --rect 4.0 3.0
 uv run python tracking/enrol_owner.py videos/<clip with the owner's face>.mp4
-uv run python tracking/track.py videos/pair_low.mp4 low videos/pair_opposite.mp4 opposite
+uv run python tracking/track.py videos/a1.mp4 a1 videos/b1.mp4 b1
 ```
 
-1. `make_pair.py` cuts the two raw recordings into `videos/pair_<camera>.mp4`, clips that start on the same frame; the last number is the offset between them in frames (25 for our pair: the opposite camera started 0.83 s earlier, found from the robot's first movement). The recordings are not in git: copy them into `videos/` at the repo root. `180049` is the `low` camera position, `160049` the `opposite` one.
+The recordings are not in git: copy them into `videos/` at the repo root. They come in pairs, `a<n>` and `b<n>`, filmed at the same time by the two cameras; each pair has its own camera positions.
+
+1. `calibrate.py` makes the floor maps of a pair, once per camera position: [calibration/README.md](calibration/README.md).
 2. `enrol_owner.py` records the owner's face from a short clip in which their face is visible (any single video; use a different stretch than the one you track). It shows the faces it found per id and asks which id is the owner.
-3. `track.py` takes the pair and the camera position of each video. Three windows open: the two camera views and a top-down room map. Positions go to `results/<start time>_positions.csv` at the repo root, one row per frame per tracked thing; every run writes a new file. Every frame is processed, so playback is slower than real time; `REALTIME` at the top of the file switches to dropping frames instead.
+3. `track.py` takes the pair and the camera position of each video. The two videos of a pair must start on the same frame and have the same frame count (the `a` recordings were re-timed to 30 fps to match their `b` partners; the untouched originals are in `videos/original/`). Three windows open: the two camera views and a top-down room map. Positions go to `results/<start time>_positions.csv` at the repo root, one row per frame per tracked thing; every run writes a new file. Every frame is processed, so playback is slower than real time; `REALTIME` at the top of the file switches to dropping frames instead.
 
 The environment is the shared one from the repo root (`uv sync`). The face models (about 280 MB) download into `~/.insightface` on first use.
 
 ## How it works
 
-**Metres.** A floor map per camera position, a 3×3 matrix fitted once from clicked tile corners, turns any pixel on the floor into metres from a fixed origin; both maps (`low`, `opposite`) share that origin and are in `calibration/`. It is only valid for points on the floor, so a person is placed at the feet, or at the knees or hips when the feet are hidden. A new camera position needs a new map: [calibration/README.md](calibration/README.md).
+**Metres.** A floor map per camera position, a 3×3 matrix fitted once from clicked floor points, turns any pixel on the floor into metres from a fixed origin. In any room the points are the corners of a measured rectangle on the floor; in the tiled lab they are tile corners. The two cameras of a pair are calibrated together, so they share the origin and the room bounds; the maps are in `calibration/`. A map is only valid for points on the floor, so a person is placed at the feet, or at the knees or hips when the feet are hidden. A new room or camera position needs new maps: [calibration/README.md](calibration/README.md).
 
 **Merging.** Each camera tracks people on its own with ids that last while they stay in view. In room coordinates, a track within 0.6 m of a person known from the other camera is the same person; otherwise it is a new person. The position is the average of the cameras that see the feet. A camera that only sees someone's upper body, because they stand right in front of it, does not place them. The robot's box ends at its edge nearest the camera, so each camera's point is pushed back by the robot's radius before averaging. When one camera loses someone the other keeps them, and a track that comes back under a new id rejoins by position.
 
@@ -28,9 +30,8 @@ The environment is the shared one from the repo root (`uv sync`). The face model
 
 - `track.py` – the tracking loop for a pair of videos: people per camera, merging, owner label, robot and ball, drawing, CSV.
 - `enrol_owner.py` – records who the owner is; writes `owner/` (face vectors and two check images, not in git).
-- `calibrate.py` – builds a floor map from clicked tile corners of `calibration/frames/<camera>.png`.
-- `tools/make_pair.py` – cuts two recordings into a synced pair.
-- `common.py` – shared: paths, lens correction, people detection, floor maps, keypoint names, room constants.
+- `calibrate.py` – builds the floor maps of a camera pair from clicked floor points (a measured rectangle, or tile corners), on a frame picked from each video.
+- `common.py` – shared: paths, lens correction, people detection, floor maps and room bounds, keypoint names, constants.
 - `faces.py` – face visibility from the pose keypoints, face vectors, similarity, the owner file.
 - `fusion.py` – merges the cameras' tracks into people and decides the owner.
 - `room_map.py` – the top-down drawing of the room.

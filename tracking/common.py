@@ -1,9 +1,9 @@
 """Shared by the tracking scripts: paths, lens correction, people detection, floor maps, keypoint names, room constants, the label drawer."""
+import json
 import os
 
 import cv2
 import numpy as np
-from ultralytics import YOLO
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CALIB_DIR = os.path.join(SCRIPT_DIR, "calibration")
@@ -16,7 +16,7 @@ TRACKER = "bytetrack.yaml"
 KPT_CONF = 0.5        # a keypoint below this confidence is treated as not visible
 TRACK_TIMEOUT_S = 1.0 # a person or object not seen for this long is forgotten
 SMOOTH_ALPHA = 0.3    # weight of the newest value in a smoothed one (1 = no smoothing): track positions and learned camera offsets
-TILE_M = 0.198        # floor tiles, centre to centre: 19.4 cm tile + 0.4 cm gap
+TILE_M = 0.198        # floor tiles of the lab (low / opposite), centre to centre: 19.4 cm tile + 0.4 cm gap
 
 # COCO keypoint indices of the pose model
 NOSE, LEFT_EYE, RIGHT_EYE = 0, 1, 2
@@ -47,10 +47,27 @@ def load_floor_map(camera):
     return np.load(os.path.join(CALIB_DIR, f"floor_map_{camera}.npy"))
 
 
+def load_room(cameras):
+    """Room bounds ((x0, x1), (y0, y1)) in metres and the grid pitch for the room map, from the cameras' floor map files.
+    Cameras calibrated together share the origin; the bounds are the union over the cameras."""
+    infos = []
+    for camera in cameras:
+        path = os.path.join(CALIB_DIR, f"floor_map_{camera}.json")
+        with open(path) as f:
+            info = json.load(f)
+        if "room_m" not in info:
+            raise SystemExit(f"{path} has no room bounds: calibrate the camera again (calibrate.py).")
+        infos.append(info)
+    rooms = np.array([info["room_m"] for info in infos], float)          # camera, axis, (lo, hi)
+    room = tuple((float(rooms[:, k, 0].min()), float(rooms[:, k, 1].max())) for k in range(2))
+    return room, float(infos[0].get("grid_m", 0.5))
+
+
 class PeopleDetector:
     """YOLO pose model in tracking mode: every person gets a persistent id."""
 
     def __init__(self):
+        from ultralytics import YOLO      # here, so that calibrate.py runs without the detection packages
         self.model = YOLO(POSE_MODEL_PATH)
 
     def detect(self, frame):

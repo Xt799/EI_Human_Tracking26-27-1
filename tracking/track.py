@@ -1,9 +1,9 @@
 """
 Track people (owner / stranger), robot and ball from two cameras and show where they are in the room.
 
-    uv run python tracking/track.py videos/pair_low.mp4 low videos/pair_opposite.mp4 opposite
+    uv run python tracking/track.py videos/a1.mp4 a1 videos/b1.mp4 b1
 
-The two videos must be simultaneous recordings of the same scene, starting on the same frame (tools/make_pair.py).
+The two videos must be simultaneous recordings of the same scene, starting on the same frame and with the same frame count.
 REALTIME below chooses between dropping frames to keep the video's pace and processing every frame.
 Keys: q or Esc quit, p pause, c continue. Positions are also written to results/<start time>_positions.csv.
 """
@@ -17,7 +17,7 @@ import numpy as np
 from ultralytics import YOLO
 
 from common import (FOOT_SOURCES, KPT_CONF, LEFT_ANKLE, LEFT_HIP, LEFT_KNEE, OBJECT_MODEL_PATH, RESULTS_DIR, RIGHT_ANKLE, RIGHT_HIP, RIGHT_KNEE, SMOOTH_ALPHA,
-                    TILE_M, TRACK_TIMEOUT_S, PeopleDetector, camera_positions, lens_correction, load_floor_map, put_label)
+                    TRACK_TIMEOUT_S, PeopleDetector, camera_positions, lens_correction, load_floor_map, load_room, put_label)
 from faces import FaceEncoder, face_visible, load_owner, similarity
 from fusion import Fusion, compatible
 from room_map import RoomMap
@@ -30,7 +30,6 @@ OBJECT_CONF = 0.5              # minimum confidence for a robot / ball box
 OBJECT_IMGSZ = 1920            # detector input size; 2560 finds the far-away ball better but is slower
 OBJECT_RADIUS_M = {"robot": 0.20}   # the bottom of a box is the edge nearest the camera; the object's centre is this much further away
 CAMERA_STEP_PX = 20            # a step this far straight down in the image points towards the camera on the floor
-ROOM_M = ((-2.84, 2.48), (-3.07, 3.04))   # the walls, metres from the red cross: 14 1/3 and 12 1/2 tiles along x, 15 1/2 and 15 1/3 along y (5.3 x 6.1 m)
 WALL_SLACK_M = 0.2             # a position this far beyond a wall still counts; further out is a detection on the wall
 EDGE_PX = 10                   # a box reaching this close to the bottom of the frame has its feet cut off
 HOLD_FEET_S = 1.0              # a knee or hip point this soon after a foot point keeps the foot position: it would be up to a metre off
@@ -45,10 +44,10 @@ LEFT_COLOUR, RIGHT_COLOUR, BONE_COLOUR, DOT_COLOUR = (0, 0, 255), (0, 255, 0), (
 
 
 # ---- Floor positions ----
-def to_metres(H, point_px):
-    """Pixel point on the floor -> (x, y) metres, or None if it lands beyond the walls (a detection on a wall)."""
+def to_metres(H, point_px, room):
+    """Pixel point on the floor -> (x, y) metres, or None if it lands beyond the walls of the room (a detection on a wall)."""
     m = cv2.perspectiveTransform(np.asarray(point_px, np.float32).reshape(1, 1, 2), H)[0, 0]
-    (x0, x1), (y0, y1) = ROOM_M
+    (x0, x1), (y0, y1) = room
     s = WALL_SLACK_M
     return m if x0 - s <= m[0] <= x1 + s and y0 - s <= m[1] <= y1 + s else None
 
@@ -123,10 +122,11 @@ class Person(Track):
 class Camera:
     """One camera: its video, floor map, detector, the people it tracks and the last frame."""
 
-    def __init__(self, video, name):
+    def __init__(self, video, name, room):
         self.name = name
         self.source = VideoSource(video)
         self.H = load_floor_map(name)
+        self.room = room             # room bounds in metres, shared by both cameras
         self.detector = PeopleDetector()
         self.correct = None
         self.people = {}
@@ -152,7 +152,7 @@ def update_people(camera, encoder, signature, t):
         person = camera.people.setdefault(tid, Person())
         pt, source = person_floor_point(kxy[i], kconf[i])
         feet_cut_off = source not in ("ankles", "ankle") and boxes[i][3] >= camera.frame.shape[0] - EDGE_PX
-        m = to_metres(camera.H, pt) if pt is not None and not feet_cut_off else None
+        m = to_metres(camera.H, pt, camera.room) if pt is not None and not feet_cut_off else None
         if m is not None:
             person.update_position(m, source, t)
         elif feet_cut_off:
@@ -180,7 +180,7 @@ def detect_objects(camera, model):
     found = {}
     for name, (xyxy, conf) in best.items():
         pt = box_floor_point(xyxy)
-        m = to_metres(camera.H, pt)
+        m = to_metres(camera.H, pt, camera.room)
         if m is not None:
             m = m - OBJECT_RADIUS_M.get(name, 0.0) * towards_camera(camera.H, pt)   # from the near edge to the centre
             found[name] = (xyxy, conf, pt, m)
@@ -218,14 +218,15 @@ def draw_object(canvas, name, box, conf, pt, m):
 
 # ---- Main loop ----
 def main(video_a, camera_a, video_b, camera_b):
-    cameras = [Camera(video_a, camera_a), Camera(video_b, camera_b)]
+    room_m, grid_m = load_room((camera_a, camera_b))
+    cameras = [Camera(video_a, camera_a, room_m), Camera(video_b, camera_b, room_m)]
     object_model = YOLO(OBJECT_MODEL_PATH)
     signature, owner_video = load_owner()
     encoder = FaceEncoder() if signature is not None else None
     print(f"Owner enrolled from: {owner_video}" if encoder else "No owner enrolled: everyone is 'unknown'.")
     print(f"Inputs: {video_a} ({camera_a}), {video_b} ({camera_b})")
 
-    room = RoomMap(ROOM_M, TILE_M)
+    room = RoomMap(room_m, grid_m)
     fusion, objects = Fusion(), {name: Track() for name in OBJECTS}
     os.makedirs(RESULTS_DIR, exist_ok=True)
     log_path = os.path.join(RESULTS_DIR, time.strftime("%Y%m%d_%H%M%S") + "_positions.csv")
