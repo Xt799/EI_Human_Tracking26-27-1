@@ -1,4 +1,5 @@
 """Frame sources: a video file (played at its real speed) or the live Basler camera."""
+import math
 import time
 
 import cv2
@@ -7,40 +8,31 @@ CAM_WIDTH, CAM_HEIGHT = 1900, 1200   # requested from the Basler camera
 
 
 class VideoSource:
-    """Reads a video file. Keeps the video clock: when processing is slower than the recording, frames are dropped."""
+    """Reads a video file by frame index. Keeps the video clock: when processing is slower than the recording, due_index() skips frames."""
 
     def __init__(self, path):
         self.cap = cv2.VideoCapture(path)
         if not self.cap.isOpened():
             raise SystemExit(f"Could not open video: {path}")
         self.fps = self.cap.get(cv2.CAP_PROP_FPS) or 30.0
+        self.width, self.height = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.clock_start = None       # wall time of video time 0
-        self.last = None              # last frame returned by read_at
 
-    def read(self):
-        """Next frame to process, or None at the end of the video."""
-        pos = self.cap.get(cv2.CAP_PROP_POS_FRAMES)
+    def due_index(self):
+        """Index of the frame to read next at the recording's pace: the next one, or a later one if processing fell behind."""
+        next_index = self.index() + 1
+        now = time.time()
         if self.clock_start is None:
-            self.clock_start = time.time() - pos / self.fps
-        target = (time.time() - self.clock_start) * self.fps
-        while pos < target - 1:
-            if not self.cap.grab():
-                return None
-            pos += 1
-        ok, frame = self.cap.read()
-        return frame if ok else None
+            self.clock_start = now - next_index / self.fps
+        return max(next_index, math.ceil((now - self.clock_start) * self.fps) - 1)
 
     def read_at(self, index):
-        """The frame with this index, skipping forward to it (a second video following the first one). None at the end."""
+        """The frame with this index, skipping forward to it. None at the end of the video."""
         while self.index() < index - 1:
             if not self.cap.grab():
                 return None
-        if self.index() == index - 1:
-            ok, frame = self.cap.read()
-            if not ok:
-                return None
-            self.last = frame
-        return self.last                  # already past it: the same frame again
+        ok, frame = self.cap.read()
+        return frame if ok else None
 
     def index(self):
         """Index of the last frame returned."""

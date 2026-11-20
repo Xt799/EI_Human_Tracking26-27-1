@@ -47,11 +47,11 @@ def collect_faces(video):
     return {tid: f for tid, f in people.items() if len(f) >= MIN_FACES}
 
 
-def contact_sheet(faces, n=10, size=96):
-    """One row of up to n face images, spread over the whole list."""
-    tiles = [cv2.resize(f, (size, size)) for f in faces[:: max(1, len(faces) // n)][:n]]
+def contact_sheet(faces, n=10):
+    """One row of up to n face images (96 px), spread over the whole list."""
+    tiles = [cv2.resize(f, (96, 96)) for f in faces[:: max(1, len(faces) // n)][:n]]
     row = cv2.hconcat(tiles)
-    return cv2.copyMakeBorder(row, 0, 0, 0, n * size - row.shape[1], cv2.BORDER_CONSTANT, value=(40, 40, 40))
+    return cv2.copyMakeBorder(row, 0, 0, 0, n * 96 - row.shape[1], cv2.BORDER_CONSTANT, value=(40, 40, 40))
 
 
 def ask_owner_ids(people):

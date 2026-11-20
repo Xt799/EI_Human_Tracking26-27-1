@@ -40,12 +40,18 @@ def head_box(kxy, width, height):
 class FaceEncoder:
     """Face detector + ArcFace on the CPU: a few crops per second, and no CUDA library clash with torch."""
 
-    def __init__(self):
+    def __init__(self, signature=None):
         from insightface.app import FaceAnalysis
         from insightface.utils import face_align
         self.app = FaceAnalysis(name=FACE_MODEL, allowed_modules=["detection", "recognition"], providers=["CPUExecutionProvider"])
         self.app.prepare(ctx_id=-1, det_size=(DET_SIZE, DET_SIZE))
         self.align = face_align.norm_crop
+        self.signature = signature     # the owner's face vectors (n x 512), needed by score()
+
+    def score(self, frame, kxy):
+        """Similarity of the face in the head crop to the owner's, or None if no face is found there."""
+        found = self.embed(frame, kxy)
+        return None if found is None else similarity(found[0], self.signature)
 
     def embed(self, frame, kxy):
         """(unit-length face vector, aligned 112x112 face image) of the largest face in the head crop, or None."""

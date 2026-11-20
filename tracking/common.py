@@ -17,13 +17,11 @@ KPT_CONF = 0.5        # a keypoint below this confidence is treated as not visib
 TRACK_TIMEOUT_S = 1.0 # a person or object not seen for this long is forgotten
 SMOOTH_ALPHA = 0.3    # weight of the newest value in a smoothed one (1 = no smoothing): track positions and learned camera offsets
 CAMERA_STEP_PX = 20  # a step this far straight down in the image points towards the camera on the floor
-TILE_M = 0.198        # floor tiles of the lab (low / opposite), centre to centre: 19.4 cm tile + 0.4 cm gap
 
 # COCO keypoint indices of the pose model
 NOSE, LEFT_EYE, RIGHT_EYE = 0, 1, 2
 LEFT_SHOULDER, RIGHT_SHOULDER = 5, 6
-LEFT_HIP, RIGHT_HIP, LEFT_KNEE, RIGHT_KNEE, LEFT_ANKLE, RIGHT_ANKLE = 11, 12, 13, 14, 15, 16
-FOOT_SOURCES = ("ankles", "ankle")   # floor point sources from the feet; a knee or hip point lands up to a metre further from the camera
+LEFT_HIP, RIGHT_HIP, LEFT_ANKLE, RIGHT_ANKLE = 11, 12, 15, 16
 
 # Colours (BGR) of the floor origin and axes, in the calibration overlay and on the room map
 ORIGIN_COLOUR, X_AXIS_COLOUR, Y_AXIS_COLOUR = (0, 0, 255), (255, 128, 0), (0, 255, 255)
@@ -88,9 +86,9 @@ class PeopleDetector:
                 r.keypoints.xy.cpu().numpy(), r.keypoints.conf.cpu().numpy())
 
 
-def put_label(img, text, org, bg=(255, 255, 255), fg=(0, 0, 0), scale=0.6):
-    """Text with a filled background box, bottom-left corner at org."""
-    (tw, th), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, 2)
+def put_label(img, text, org, bg=(255, 255, 255)):
+    """Black text with a filled background box, bottom-left corner at org."""
+    (tw, th), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
     x, y = org
     cv2.rectangle(img, (x, y - th - baseline - 4), (x + tw + 6, y + 4), bg, -1)
-    cv2.putText(img, text, (x + 3, y - 4), cv2.FONT_HERSHEY_SIMPLEX, scale, fg, 2)
+    cv2.putText(img, text, (x + 3, y - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
