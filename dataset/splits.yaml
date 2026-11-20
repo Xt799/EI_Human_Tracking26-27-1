@@ -1,0 +1,11 @@
+# Which part of each paired recording is used for training, validation and test, as camera_1 frame ranges
+# [first, last] on the common timeline (see recordings.yaml). Both cameras of a moment are always in the same split.
+# Splits are contiguous stretches of time, not random frames: neighbouring frames are nearly identical, so a random
+# split would put the same scene in train and test.
+
+room_1_20261012_1800:
+  train: [0, 3899]        # 0-130 s
+  val:   [3900, 4499]     # 130-150 s
+  test:  [4500, 5929]     # 150-198 s
+
+# room_2_20261110_1709: added when its camera offset is known

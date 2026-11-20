@@ -1,8 +1,8 @@
-"""Build the YOLO dataset (full frames, no crops) from the X-AnyLabeling labels in dataset/{train,test,val}.
+"""Build the YOLO dataset (full frames, no crops) from the X-AnyLabeling labels in dataset_old/{train,test,val} (the first, single-camera dataset).
 
 Run from the repository root:  uv run python training/scripts/build_full.py [--with-test]
-  train  = dataset/train (+ dataset/test ONLY with --with-test; normally the test set must never be trained on)
-  val    = dataset/val
+  train  = dataset_old/train (+ dataset_old/test ONLY with --with-test; normally the test set must never be trained on)
+  val    = dataset_old/val
 Every image is used once per epoch.
 """
 import argparse
@@ -11,7 +11,7 @@ import shutil
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DATASET = ROOT.parent / "dataset"
+DATASET = ROOT.parent / "dataset_old"
 OUT = ROOT / "ds_full"
 CLASSES = ["robot", "ball"]
 
@@ -40,7 +40,7 @@ def convert(src: Path, tag: str):
 
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--with-test", action="store_true", help="ALSO train on dataset/test (cheating: only for pseudo-labelling other videos)")
+ap.add_argument("--with-test", action="store_true", help="ALSO train on dataset_old/test (cheating: only for pseudo-labelling other videos)")
 a = ap.parse_args()
 
 shutil.rmtree(OUT, ignore_errors=True)
@@ -50,7 +50,7 @@ shutil.rmtree(OUT, ignore_errors=True)
 train = convert(DATASET / "train", "train")
 test = convert(DATASET / "test", "test") if a.with_test else []
 val = convert(DATASET / "val", "val")
-assert val, "dataset/val is empty"
+assert val, "dataset_old/val is empty"
 (OUT / "train.txt").write_text("\n".join(train + test) + "\n")
 (OUT / "val.txt").write_text("\n".join(val) + "\n")
 (OUT / "data.yaml").write_text(f"path: {OUT.as_posix()}\ntrain: train.txt\nval: val.txt\n"

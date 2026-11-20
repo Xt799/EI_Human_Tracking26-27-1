@@ -3,7 +3,10 @@
 We train on full frames (1920 px), labelling only the robot and the ball; people are not labelled. Always run commands from the project root.
 Install the shared environment once: `uv sync` (CUDA 12.8 torch, also works on RTX 50xx).
 
-## Data (`../dataset/`, X-AnyLabeling `.json` + image, classes: robot, ball)
+## Data (`../dataset_old/`, X-AnyLabeling `.json` + image, classes: robot, ball)
+This is the first, single-camera dataset. It is git-ignored and kept locally only; to get it back, check out
+`dataset/{train,val,test}` from a commit before it was moved (for example `git checkout 24b8932 -- dataset`) and move
+the three folders to `dataset_old/`.
 - `train/` – 16 original images (`frame_17-*`) + `auto_*` images pre-labelled from the videos and corrected by hand. `train/{ball,robot}/cutout|raw` are the cutouts for the synthetic generator.
 - `val/` – validation (last ~18% of the test video, 24 frames)
 - `test/` – test (from the largest video, 87 frames). Never used for training.

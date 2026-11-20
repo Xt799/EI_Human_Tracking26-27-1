@@ -1,4 +1,4 @@
-"""Evaluate detectors on a hand-corrected X-AnyLabeling set (dataset/test by default).
+"""Evaluate detectors on a hand-corrected X-AnyLabeling set (dataset_old/test by default).
 
 uv run python training/scripts/evaluate.py WEIGHTS [WEIGHTS ...] [--set test] [--imgsz 1920] [--conf 0.5]
 
@@ -55,16 +55,16 @@ def yolo_dataset(items, name):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("weights", nargs="+", type=Path)
-    ap.add_argument("--set", default="test", help="folder under dataset/ (test or val)")
+    ap.add_argument("--set", default="test", help="folder under dataset_old/ (test or val)")
     ap.add_argument("--imgsz", type=int, default=1920)
     ap.add_argument("--conf", type=float, default=0.5)
     ap.add_argument("--iou", type=float, default=0.45)
     a = ap.parse_args()
 
-    items = load(ROOT / "dataset" / a.set)
+    items = load(ROOT / "dataset_old" / a.set)
     data = yolo_dataset(items, a.set)
     n_obj = {c: sum(len(gt[c]) for _, gt, _, _ in items) for c in CLASSES}
-    print(f"set: dataset/{a.set}, {len(items)} frames, {n_obj['robot']} robots, {n_obj['ball']} balls; imgsz {a.imgsz}, conf {a.conf}\n")
+    print(f"set: dataset_old/{a.set}, {len(items)} frames, {n_obj['robot']} robots, {n_obj['ball']} balls; imgsz {a.imgsz}, conf {a.conf}\n")
     for wpath in a.weights:
         model = YOLO(str(wpath))
         m = model.val(data=str(data), imgsz=a.imgsz, batch=4, device=0, plots=False, verbose=False, project=str(ROOT / "training" / "ds_eval"),

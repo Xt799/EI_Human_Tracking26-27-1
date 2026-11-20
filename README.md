@@ -2,7 +2,8 @@
 
 ## Repository layout
 - `cap_detection/` – cap detection scripts (Basler camera, YOLO pose, ROS 2 position publisher).
-- `dataset/` – X-AnyLabeling labels (`.json`) and images (in Git LFS): `train/`, `val/`, `test/`. The `videos/` folder (raw videos) is not in the repository.
+- `dataset/` – paired two-camera recordings and their labels; see [dataset/README.md](dataset/README.md). The first, single-camera robot/ball dataset is no longer in the repository: it is kept locally in `dataset_old/` (git-ignored) and is in the git history.
+- `videos/` – raw recordings, not in the repository: `videos/room_<n>/camera_<n>/*.mp4`.
 - `training/` – fine-tuning of the robot and ball detector (YOLO26n); see [training/README.md](training/README.md).
 - `inference/` – live view of the detector on a video.
 - `tracking/` – multi-camera tracking of people, the robot and the ball; see [tracking/README.md](tracking/README.md).

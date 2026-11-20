@@ -1,12 +1,12 @@
-"""Pseudo-label many diverse frames from the NON-test videos into dataset/train for MANUAL REVIEW in X-AnyLabeling.
+"""Pseudo-label many diverse frames from the NON-test videos into dataset_old/train for MANUAL REVIEW in X-AnyLabeling.
 
 uv run python training/scripts/make_trainset.py [--n 400] [--hard 120] [--scan-step 5]
 
 1. Scan every --scan-step-th frame of every video except the largest (= test video) with three model configurations, and cluster their boxes.
 2. Choose --n frames: up to --hard "hard" ones (second robot/ball candidate, uncertain, seen by one configuration only), the rest by
    farthest-point sampling on thumbnails, so near-identical frames (robot standing still) are not chosen again and again.
-3. Write dataset/train/auto_<video>_<frame>.jpg + .json (X-AnyLabeling format: at most 1 robot + 1 ball per frame), review pages in
-   dataset/train/review/page_*.jpg (flagged frames first) and dataset/train/frames_to_check.txt.
+3. Write dataset_old/train/auto_<video>_<frame>.jpg + .json (X-AnyLabeling format: at most 1 robot + 1 ball per frame), review pages in
+   dataset_old/train/review/page_*.jpg (flagged frames first) and dataset/train/frames_to_check.txt.
 The labels are model output, NOT ground truth, until you have reviewed them.
 """
 import argparse
@@ -19,7 +19,7 @@ from ultralytics import YOLO
 
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-OUT = ROOT / "dataset" / "train"
+OUT = ROOT / "dataset_old" / "train"
 CLASSES = ["robot", "ball"]
 COLORS = {"robot": (0, 200, 255), "ball": (0, 255, 0)}   # BGR
 CONFIGS = [("yolo26n_e100", 1920), ("yolo26n_e100", 2560), ("yolo26n_e100", 3200)]   # (run name, imgsz): their agreement is the confidence
@@ -51,13 +51,13 @@ def main():
     ap.add_argument("--n", type=int, default=400)
     ap.add_argument("--hard", type=int, default=120)
     ap.add_argument("--scan-step", type=int, default=5)
-    ap.add_argument("--force", action="store_true", help="overwrite the auto_* frames (and your corrections!) already in dataset/train")
+    ap.add_argument("--force", action="store_true", help="overwrite the auto_* frames (and your corrections!) already in dataset_old/train")
     a = ap.parse_args()
     if list(OUT.glob("auto_*.json")) and not a.force:
         raise SystemExit(f"{OUT} already holds auto_* labels (probably hand-corrected). Use --force to overwrite them.")
 
     models = {n: YOLO(str(ROOT / "training" / "runs" / n / "weights" / "best.pt")) for n in {c[0] for c in CONFIGS}}
-    videos = sorted((ROOT / "videos").glob("*.mp4"), key=lambda p: p.stat().st_size)[:-1]   # all but the test video
+    videos = sorted((ROOT / "videos" / "room_1" / "camera_1").glob("*.mp4"), key=lambda p: p.stat().st_size)[:-1]   # all but the test video
 
     def detect(f):
         res = []

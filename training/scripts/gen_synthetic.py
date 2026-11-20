@@ -18,7 +18,7 @@ import cv2
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-CUTOUTS = ROOT / "dataset" / "train"
+CUTOUTS = ROOT / "dataset_old" / "train"
 BG_DIR = ROOT / "dataset" / "backgrounds"
 OUT = ROOT / "training" / "ds_full"
 CLASSES = ["robot", "ball"]
