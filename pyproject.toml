@@ -1,0 +1,22 @@
+[project]
+name = "ei-human-tracking"
+version = "0.1.0"
+description = "YOLO fine-tuning (training/) and live inference (inference/) for robot and ball detection"
+requires-python = ">=3.11"
+dependencies = [
+    "opencv-python",
+    "numpy",
+    "scipy",
+    "ultralytics",
+    "torch",
+    "torchvision",
+]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true

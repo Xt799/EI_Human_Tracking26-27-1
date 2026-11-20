@@ -1,0 +1,26 @@
+# environment, cache, logs
+.venv/
+__pycache__/
+.DS_Store
+*.log
+screenshot_*.png
+
+# large / generated / downloadable
+videos/
+training/ds_full/
+training/ds_eval/
+*.pt
+dataset/backgrounds/
+dataset/test/review/
+dataset/train/*/raw/
+dataset/train/*/Pasted*
+
+# experimental runs: only the final YOLO26n model is committed
+training/runs/*
+!training/runs/yolo26n_e100/
+training/runs/yolo26n_e100/*
+!training/runs/yolo26n_e100/weights/
+!training/runs/yolo26n_e100/args.yaml
+!training/runs/yolo26n_e100/results.csv
+training/runs/yolo26n_e100/weights/*
+!training/runs/yolo26n_e100/weights/best.pt

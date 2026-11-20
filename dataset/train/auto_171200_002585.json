@@ -1,0 +1,52 @@
+{
+  "version": "2.5.4",
+  "flags": {},
+  "imagePath": "auto_171200_002585.jpg",
+  "imageData": null,
+  "imageHeight": 1200,
+  "imageWidth": 1900,
+  "shapes": [
+    {
+      "label": "robot",
+      "score": null,
+      "points": [
+        [
+          1364.6,
+          134.7
+        ],
+        [
+          1487.6,
+          230.4
+        ]
+      ],
+      "group_id": null,
+      "description": "auto: robot support=1.86 cfgs=3/3 meanconf=0.62",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "ball",
+      "score": null,
+      "points": [
+        [
+          444.2,
+          385.7
+        ],
+        [
+          482.4,
+          426.2
+        ]
+      ],
+      "group_id": null,
+      "description": "auto: ball support=2.67 cfgs=3/3 meanconf=0.89",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    }
+  ]
+}

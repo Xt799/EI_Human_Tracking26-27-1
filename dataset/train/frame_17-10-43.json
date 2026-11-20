@@ -1,0 +1,31 @@
+{
+  "version": "2.5.4",
+  "flags": {},
+  "shapes": [
+    {
+      "label": "robot",
+      "score": null,
+      "points": [
+        [
+          780.0,
+          138.0
+        ],
+        [
+          867.0,
+          224.0
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    }
+  ],
+  "imagePath": "frame_17-10-43.png",
+  "imageData": null,
+  "imageHeight": 1200,
+  "imageWidth": 1900
+}
