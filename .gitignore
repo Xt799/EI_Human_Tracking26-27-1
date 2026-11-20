@@ -7,6 +7,7 @@ screenshot_*.png
 
 # large / generated / downloadable
 videos/
+results/
 training/ds_full/
 training/ds_eval/
 *.pt
@@ -24,3 +25,18 @@ training/runs/yolo26n_e100/*
 !training/runs/yolo26n_e100/results.csv
 training/runs/yolo26n_e100/weights/*
 !training/runs/yolo26n_e100/weights/best.pt
+
+# people pose model used by tracking/ (stock Ultralytics file, never changes)
+!tracking/models/yolo11s-pose.pt
+
+# keep the (empty) videos folder: the recordings are copied there, see tracking/README.md
+!videos/
+videos/*
+!videos/.gitkeep
+
+# owner enrolment output: personal, per session
+tracking/owner/
+
+# setup files, not needed for everyone
+basler_record_video.py
+new_with_pub_.py

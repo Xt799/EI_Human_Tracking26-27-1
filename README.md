@@ -5,6 +5,7 @@
 - `dataset/` – X-AnyLabeling labels (`.json`) and images (in Git LFS): `train/`, `val/`, `test/`. The `videos/` folder (raw videos) is not in the repository.
 - `training/` – fine-tuning of the robot and ball detector (YOLO26n); see [training/README.md](training/README.md).
 - `inference/` – live view of the detector on a video.
+- `tracking/` – multi-camera tracking of people, the robot and the ball; see [tracking/README.md](tracking/README.md).
 
 ## Robot and ball detection (YOLO26n)
 Model that detects the robot and the ball in video: fine-tuning (`training/`) and live view (`inference/`).
@@ -14,6 +15,7 @@ uv sync                                        # once, shared .venv (CUDA 12.8 t
 uv run python inference/live_view.py --video <video.mp4>   # live view
 ```
 Training pipeline, data and results: [training/README.md](training/README.md).
+Tracking of people (owner / stranger), the robot and the ball from two cameras, in metres: [tracking/README.md](tracking/README.md).
 
 - `training/runs/yolo26n_e100/weights/best.pt` – the trained model.
 - The pretrained `yolo26n.pt` is downloaded automatically on the first training run (`training/`).

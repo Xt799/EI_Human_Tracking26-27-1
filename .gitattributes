@@ -1,3 +1,6 @@
 # dataset images in Git LFS, labels (.json) as plain text
 dataset/**/*.jpg filter=lfs diff=lfs merge=lfs -text
 dataset/**/*.png filter=lfs diff=lfs merge=lfs -text
+
+# one line ending everywhere: Windows checkouts and the Linux lab machine agree
+* text=auto eol=lf
