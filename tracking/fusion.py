@@ -1,4 +1,4 @@
-"""Merge the two cameras' person tracks into one set of people in room coordinates, and decide who the owner is."""
+"""Merge the two cameras' person tracks into one set of people in room coordinates and decide who the owner is; average the robot and the ball."""
 from collections import deque
 
 import numpy as np
@@ -30,6 +30,14 @@ def distance(a, b):
     return float(np.linalg.norm(a - b))
 
 
+def fuse_objects(objects, found, t):
+    """Robot and ball positions: the average of the cameras that see them in this frame. found: {camera: {name: (box, conf, pixel, metres)}}."""
+    for name, obj in objects.items():
+        points = [found[cam][name][3] for cam in found if name in found[cam]]
+        if points:
+            obj.update_position(np.mean(points, axis=0), t)
+
+
 class FusedPerson:
     """One person in the room: which track in each camera is them, their position and their owner score."""
 
@@ -40,6 +48,7 @@ class FusedPerson:
         self.label = "unknown"
         self.sim = None
         self.placed = -1e9           # when the person was last placed on the floor
+        self.placed_by = []          # the cameras that placed them then
         self.offset = {}             # camera -> its point minus the two-camera average, learned while both cameras see the person
         self.apart_since = None
         self.trail = deque(maxlen=TRAIL_N)
@@ -196,7 +205,7 @@ class Fusion:
             cam, tr = next(iter(placed.items()))
             p.floor_m = tr.floor_m - p.offset.get(cam, 0.0)
         p.trail.append(p.floor_m)
-        p.placed = self.t
+        p.placed, p.placed_by = self.t, sorted(placed)
 
     def same_spot(self, p, q):
         """True for two people seen by different cameras, both placed in this frame within ATTACH_M, whose faces do not contradict."""

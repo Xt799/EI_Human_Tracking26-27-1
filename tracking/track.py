@@ -19,7 +19,7 @@ from ultralytics import YOLO
 from common import (KPT_CONF, LEFT_ANKLE, OBJECT_MODEL_PATH, RESULTS_DIR, RIGHT_ANKLE, SMOOTH_ALPHA, TRACK_TIMEOUT_S, PeopleDetector,
                     camera_positions, lens_correction, load_floor_map, load_room, put_label, towards_camera)
 from faces import FaceEncoder, face_visible, load_owner
-from fusion import Fusion, compatible
+from fusion import Fusion, compatible, fuse_objects
 from orientation import HEADING_HOLD_S, blend, body_heading, degrees, floor_frame
 from room_map import RoomMap
 from sources import VideoSource
@@ -92,7 +92,7 @@ class Person(Track):
         self.last_seen = -1e9        # time of the last detection, placed or not
         self.sim = None
         self.last_check = -1e9
-        self.heading = None         # smoothed unit vector on the floor the body faces (orientation.py)
+        self.heading = None          # smoothed unit vector on the floor the body faces (orientation.py)
         self.heading_w = 0.0         # weight of the last heading measurement
         self.heading_at = -1e9       # time of the last heading measurement
 
@@ -175,14 +175,6 @@ def detect_objects(camera, model):
     return found
 
 
-def update_objects(objects, found, t):
-    """Robot and ball positions: the average of the cameras that see them in this frame."""
-    for name, obj in objects.items():
-        points = [found[cam][name][3] for cam in found if name in found[cam]]
-        if points:
-            obj.update_position(np.mean(points, axis=0), t)
-
-
 # ---- Position log ----
 def open_log():
     """Starts a new CSV in results/, named by the start time. Returns the file and its writer."""
@@ -200,7 +192,7 @@ def log_positions(writer, frame_index, t, people, objects, found):
     for p in people:
         if p.placed == t:
             writer.writerow([frame_index, f"{t:.3f}", "person", f"P{p.id}", p.label, f"{p.floor_m[0]:.3f}", f"{p.floor_m[1]:.3f}",
-                             "+".join(sorted(p.members)), "" if p.sim is None else f"{p.sim:.2f}",
+                             "+".join(p.placed_by), "" if p.sim is None else f"{p.sim:.2f}",
                              "" if p.heading is None else f"{degrees(p.heading):.1f}"])
     for name, obj in objects.items():
         if obj.placed == t:
@@ -252,6 +244,14 @@ def camera_view(cam, seen, links, found, t, fps):
     return cv2.resize(canvas, (0, 0), fx=DISPLAY_SCALE, fy=DISPLAY_SCALE)
 
 
+def place_windows(cameras):
+    """Opens the three windows: the two camera views on the left, one above the other, the room map to their right."""
+    w, h = int(cameras[0].source.width * DISPLAY_SCALE), int(cameras[0].source.height * DISPLAY_SCALE)
+    for name, x, y in ((cameras[0].name, 0, 0), (cameras[1].name, 0, h + 40), ("Room", w + 10, 0)):
+        cv2.namedWindow(name)
+        cv2.moveWindow(name, x, y)
+
+
 def room_marks(people, objects, t):
     """What the room map shows, as RoomMap.draw takes it: the people, and the robot and ball while their position is fresh."""
     marks = [(p.floor_m, LABEL_COLOUR[p.label], f"P{p.id} {p.label}", p.trail, p.heading) for p in people if p.floor_m is not None]
@@ -272,8 +272,9 @@ def main(video_a, camera_a, video_b, camera_b):
     room = RoomMap(room_m, grid_m)
     fusion, objects = Fusion(), {name: Track() for name in OBJECTS}
     log, writer = open_log()
+    place_windows(cameras)
 
-    windows_placed, fps, n_frames, fps_t0, paused = False, 0.0, 0, time.time(), False
+    fps, n_frames, fps_t0, paused = 0.0, 0, time.time(), False
     try:
         while True:
             if paused:
@@ -292,7 +293,7 @@ def main(video_a, camera_a, video_b, camera_b):
             seen = {cam.name: update_people(cam, encoder, t) for cam in cameras}
             links = fusion.update({cam.name: cam.people for cam in cameras}, t)
             found = {cam.name: detect_objects(cam, object_model) for cam in cameras}
-            update_objects(objects, found, t)
+            fuse_objects(objects, found, t)
             log_positions(writer, frame_index, t, fusion.people.values(), objects, found)
 
             n_frames += 1
@@ -301,12 +302,6 @@ def main(video_a, camera_a, video_b, camera_b):
             for cam in cameras:
                 cv2.imshow(cam.name, camera_view(cam, seen[cam.name], links, found[cam.name], t, fps))
             cv2.imshow("Room", room.draw(room_marks(fusion.people.values(), objects, t)))
-            if not windows_placed:
-                h = int(cameras[0].frame.shape[0] * DISPLAY_SCALE)
-                cv2.moveWindow(cameras[0].name, 0, 0)
-                cv2.moveWindow(cameras[1].name, 0, h + 40)
-                cv2.moveWindow("Room", int(cameras[0].frame.shape[1] * DISPLAY_SCALE) + 10, 0)
-                windows_placed = True
 
             key = cv2.waitKey(1) & 0xFF
             if key in (27, ord("q")):
