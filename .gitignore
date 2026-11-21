@@ -13,6 +13,7 @@ training/ds_eval/
 training/ds_sync/
 training/ds_review/
 training/ds_pose/
+training/ds_pose_crop/
 .xanylabeling/
 *.pt
 dataset/backgrounds/
