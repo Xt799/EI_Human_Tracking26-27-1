@@ -11,6 +11,7 @@ results/
 training/ds_full/
 training/ds_eval/
 training/ds_sync/
+.xanylabeling/
 *.pt
 dataset/backgrounds/
 

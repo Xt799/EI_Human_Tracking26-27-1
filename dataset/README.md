@@ -14,6 +14,23 @@ in one view be checked against, or carried over to, the other view through the f
 The first, single-camera robot/ball dataset is in `../dataset_old/` (git-ignored, kept locally; see
 [../training/README.md](../training/README.md) for how to restore it from git).
 
+## Adding images
+```
+uv run python training/scripts/make_paired_frames.py <recording> [--n 150]
+```
+Picks moments where the robot is seen by both cameras, as varied as possible, per split, and writes both views
+(lens-corrected, as `tracking/` sees them).
+
+## Labelling (X-AnyLabeling)
+```
+powershell -File training/labeling/label.ps1 dataset/room_1_20261012_1800/camera_1
+```
+Keys `1`-`4` switch to point mode with the wheel label already set (`wheel_1` ... `wheel_4`): press the key, click the
+wheel, next key. Key `5` draws the robot box. Numbering, seen from the robot (front = gripper side): `wheel_1` front
+left, `wheel_2` front right, `wheel_3` rear left, `wheel_4` rear right. Click where the wheel touches the floor; leave
+out a wheel you cannot see. The settings are in `training/labeling/xanylabeling.yaml`; your global X-AnyLabeling
+settings are not changed.
+
 ## Pairing two cameras
 ```
 uv run python training/scripts/sync_cameras.py VIDEO_CAMERA_1 VIDEO_CAMERA_2 --guess <s> --search <s>

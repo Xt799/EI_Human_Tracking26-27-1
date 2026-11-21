@@ -1,0 +1,25 @@
+# X-AnyLabeling settings for this project (read with --config by label.ps1; the user's global settings are not touched).
+#
+# Keys 1-4: point mode with the wheel label already chosen: press the key, click the wheel, next key.
+# Key 5: rectangle around the whole robot.
+# Wheel numbering, seen from the robot (front = the gripper side):
+#   wheel_1 front left, wheel_2 front right, wheel_3 rear left, wheel_4 rear right.
+# Click where the wheel touches the floor, in the middle of its width. A wheel you cannot see: leave it out.
+
+labels:
+  - wheel_1
+  - wheel_2
+  - wheel_3
+  - wheel_4
+  - robot
+sort_labels: false
+validate_label: exact
+auto_use_last_label: false
+store_data: false
+
+digit_shortcuts:
+  1: {mode: point, label: wheel_1}
+  2: {mode: point, label: wheel_2}
+  3: {mode: point, label: wheel_3}
+  4: {mode: point, label: wheel_4}
+  5: {mode: rectangle, label: robot}
