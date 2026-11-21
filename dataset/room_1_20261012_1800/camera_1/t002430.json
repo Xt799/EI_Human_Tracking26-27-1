@@ -1,0 +1,46 @@
+{
+  "version": "4.0.6",
+  "flags": {},
+  "checked": false,
+  "shapes": [
+    {
+      "label": "wheel_3",
+      "score": null,
+      "points": [
+        [
+          942.6516723632812,
+          693.65673828125
+        ]
+      ],
+      "group_id": null,
+      "description": "auto: copied from t002235 (robot not moved)",
+      "difficult": true,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "wheel_4",
+      "score": null,
+      "points": [
+        [
+          919.6693115234375,
+          702.7145385742188
+        ]
+      ],
+      "group_id": null,
+      "description": "auto: copied from t002235 (robot not moved)",
+      "difficult": true,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    }
+  ],
+  "imagePath": "t002430.jpg",
+  "imageData": null,
+  "imageHeight": 1200,
+  "imageWidth": 1900,
+  "description": ""
+}

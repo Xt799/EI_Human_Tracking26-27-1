@@ -36,6 +36,40 @@
       "flags": {},
       "attributes": {},
       "kie_linking": []
+    },
+    {
+      "label": "wheel_1",
+      "score": null,
+      "points": [
+        [
+          866.8592529296875,
+          531.6151123046875
+        ]
+      ],
+      "group_id": null,
+      "description": "auto: projected from camera_2",
+      "difficult": true,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "wheel_2",
+      "score": null,
+      "points": [
+        [
+          885.0631103515625,
+          537.0576782226562
+        ]
+      ],
+      "group_id": null,
+      "description": "auto: projected from camera_2",
+      "difficult": true,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
     }
   ],
   "imagePath": "t005310.jpg",
