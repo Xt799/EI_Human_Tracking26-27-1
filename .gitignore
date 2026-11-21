@@ -42,3 +42,6 @@ tracking/owner/
 # setup files, not needed for everyone
 basler_record_video.py
 new_with_pub_.py
+
+# Per-room live camera calibration and intrinsics
+/tracking/calibration/live/

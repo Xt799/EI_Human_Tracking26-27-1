@@ -10,7 +10,7 @@ import os
 import cv2
 import numpy as np
 
-from common import SCRIPT_DIR
+from common import SCRIPT_DIR, require_trained_weight
 
 HEADING_MODEL_PATH = os.path.join(SCRIPT_DIR, "..", "training", "runs", "heading", "weights", "last.pt")
 CROP_SCALE = 2.0          # crop side: this many times the robot box's longer side
@@ -48,7 +48,7 @@ class RobotHeading:
 
     def __init__(self, path=HEADING_MODEL_PATH, conf=HEADING_CONF):
         from ultralytics import YOLO
-        self.model = YOLO(path)
+        self.model = YOLO(require_trained_weight(path))
         self.conf = conf
 
     def measure(self, frame, box):

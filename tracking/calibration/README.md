@@ -28,3 +28,11 @@ Then track with the same names: `uv run python tracking/track.py --video videos/
 ## Existing maps
 
 `a4` and `b4`, the tiled lab, made from clicked tile corners (19.8 cm centre to centre). Both share the origin, the tile corner at the red tape cross. Their room bounds are the walls: x −2.84 … 2.48 m, y −3.07 … 3.04 m, which is 14 ⅓ and 12 ½ tiles along x and 15 ½ and 15 ⅓ along y (5.3 × 6.1 m). They were checked against each other: the same tape marks give the same metre coordinates from either map. Their bounds were set by hand in the `.json` files (`room_m`); recalibrating them with `calibrate.py` would replace those bounds with the clicked points' area.
+
+## Live Basler profiles
+
+List serials with `uv run python tracking/track.py --list-cameras`. Calibrate all live views in one invocation with repeated `--basler SERIAL VIEW` and either `--rect W H` or `--metres`. Select a frame with the floor visible, click the common measured points, and accept the final grid preview. Use the same view names in tracking.
+
+Live calibration writes `tracking/calibration/live/profiles.json` and grid overlays. Each profile records its serial, observed camera geometry, lens-file fingerprints and the room coordinate system shared by that calibration session. The tracker validates these on startup. Recalibrate after moving a camera, changing geometry or replacing the lens. Checked-in recording maps are historical. To use those camera positions live, repeat the measurement with the connected cameras and verify the new overlay against the physical floor marks.
+
+The checked-in lens model is available for the original 1900×1200 Basler setup. To use different optics or frame geometry, supply the corresponding OpenCV `camera_matrix.npy` and `distortion_coefficients.npy` in `tracking/calibration/live/intrinsics/VIEW/` before calibrating. Display scaling affects previews only. The calibration and tracking both project from the full-size corrected frame.

@@ -17,11 +17,16 @@ Keys: frame picker a/d -1/+1 s, w/s -10/+10 s, Enter accept; clicking u undo, q 
 import argparse
 import json
 import os
+import time
+from contextlib import closing
+from uuid import uuid4
 
 import cv2
 import numpy as np
 
 from common import CALIB_DIR, ORIGIN_COLOUR, X_AXIS_COLOUR, Y_AXIS_COLOUR, lens_correction
+from live_calibration import LIVE_CALIB_DIR, intrinsics, save_profiles, validate_pairs
+from sources import BaslerSource, LIVE_TIMEOUT_S, pylon_devices
 
 POINTS = 6              # points to click with --metres, at least 4
 DISPLAY_SCALE = 0.5
@@ -77,6 +82,30 @@ def load_frame(name, video, start_frame):
     if frame is None:
         raise SystemExit(f"Could not read {path}: pass --video, or save one raw camera frame with the floor visible there.")
     return frame, path
+
+
+def pick_live_frame(source, name):
+    """Preview the camera and return the raw frame accepted by the operator."""
+    win = f"{name}: show the floor points (Enter accept, q abort)"
+    cv2.namedWindow(win, cv2.WINDOW_AUTOSIZE)
+    try:
+        source.start()
+        started = time.monotonic()
+        frame = None
+        while True:
+            latest = source.take_latest()
+            if latest is not None:
+                frame = latest.image
+                cv2.imshow(win, cv2.resize(frame, None, fx=DISPLAY_SCALE, fy=DISPLAY_SCALE))
+            if source.error or time.monotonic() - (source.last_received or started) >= LIVE_TIMEOUT_S:
+                raise RuntimeError(f"{name} ({source.serial}): {source.error or 'no live frames'}")
+            key = cv2.waitKey(20) & 0xFF
+            if key in ENTER and frame is not None:
+                return frame
+            if key in (ord("q"), ESC) or cv2.getWindowProperty(win, cv2.WND_PROP_VISIBLE) < 1:
+                raise SystemExit("Aborted.")
+    finally:
+        cv2.destroyWindow(win)
 
 
 # ---- Clicking ----
@@ -253,10 +282,22 @@ def main(a):
         print(f"Rectangle {a.rect[0]} m (A->B, x) by {a.rect[1]} m (A->D, y). Decide now which physical corner is A, B, C, D,")
         print("going around the rectangle, and click the same corners in every camera.")
 
-    frames, results = {}, {}
+    frames, results, bindings = {}, {}, {}
+    live = {view: serial for serial, view in (a.basler or [])}
+    devices = pylon_devices() if live else None
     for i, name in enumerate(a.cameras):
-        frame, image_path = load_frame(name, None if a.video is None else a.video[i], a.frame)
-        frames[name] = (lens_correction(frame.shape[1], frame.shape[0])(frame), image_path)
+        if live:
+            with closing(BaslerSource(live[name], devices)) as source:
+                directory, fingerprints = intrinsics(name, source.geometry)
+                print(f"{name}: using intrinsics from {directory}")
+                frame = pick_live_frame(source, name)
+                bindings[name] = {"serial": source.serial, "geometry": source.geometry, "intrinsics": fingerprints}
+            corrected = lens_correction(frame.shape[1], frame.shape[0], directory)(frame)
+            image_path = None
+        else:
+            frame, image_path = load_frame(name, None if a.video is None else a.video[i], a.frame)
+            corrected = lens_correction(frame.shape[1], frame.shape[0])(frame)
+        frames[name] = corrected, image_path
         results[name] = calibrate_camera(name, frames[name][0], mode, a.rect)
 
     room_m = room_bounds(results)
@@ -264,20 +305,25 @@ def main(a):
     print(f"\nTracked area: x {room_m[0][0]} .. {room_m[0][1]} m, y {room_m[1][0]} .. {room_m[1][1]} m"
           f" ({room_m[0][1] - room_m[0][0]:.2f} x {room_m[1][1] - room_m[1][0]:.2f} m)")
 
-    overlays = []
+    overlays, live_artifacts = [], {}
+    room_id = str(uuid4()) if live else None
     for name, r in results.items():
         frame, image_path = frames[name]
-        base = os.path.join(CALIB_DIR, f"floor_map_{name}")
-        np.save(base + ".npy", r["H"])
-        with open(base + ".json", "w") as f:
-            json.dump({"image": os.path.basename(image_path), "mode": mode, "rect_m": a.rect,
-                       "calibrated_with": [c for c in a.cameras if c != name], "room_m": room_m, "grid_m": grid_m,
-                       "points_px": r["points_px"], "points_coords": r["points_coords"], "points_m": r["points_m"]}, f, indent=2)
+        metadata = {"mode": mode, "rect_m": a.rect, "calibrated_with": [c for c in a.cameras if c != name],
+                    "room_m": room_m, "grid_m": grid_m, "points_px": r["points_px"],
+                    "points_coords": r["points_coords"], "points_m": r["points_m"]}
         overlay = draw_overlay(frame, r["H"], grid_m, room_m, r["points_m"])
         cv2.putText(overlay, name, (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 3)
-        cv2.imwrite(base + ".jpg", overlay, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        if live:
+            live_artifacts[name] = (metadata | bindings[name] | {"room_id": room_id, "homography": r["H"].tolist()}, overlay)
+        else:
+            base = os.path.join(CALIB_DIR, f"floor_map_{name}")
+            np.save(base + ".npy", r["H"])
+            with open(base + ".json", "w") as f:
+                json.dump(metadata | {"image": os.path.basename(image_path)}, f, indent=2)
+            cv2.imwrite(base + ".jpg", overlay, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            print(f"Saved {base}.npy, .json and .jpg")
         overlays.append(cv2.resize(overlay, None, fx=DISPLAY_SCALE, fy=DISPLAY_SCALE))
-        print(f"Saved {base}.npy, .json and .jpg")
 
     print("Check the .jpg files: the green grid must lie flat on the floor everywhere, and the same grid square must cover")
     print(f"the same spot of the floor in every camera ({grid_m} m squares, origin red, x blue, y yellow, tracked area magenta).")
@@ -285,19 +331,48 @@ def main(a):
     check = np.hstack([cv2.resize(o, (int(o.shape[1] * h / o.shape[0]), h)) for o in overlays])
     if check.shape[1] > 1900:
         check = cv2.resize(check, None, fx=1900 / check.shape[1], fy=1900 / check.shape[1])
-    cv2.imshow("check: the grid should lie on the floor, the same in every camera (any key closes)", check)
-    cv2.waitKey(0)
+    controls = "Enter saves, q cancels" if live else "any key closes"
+    title = f"Check the floor grid across all views ({controls})"
+    cv2.imshow(title, check)
+    key = cv2.waitKey(0) & 0xFF
+    while live and key not in (*ENTER, ord("q"), ESC) and cv2.getWindowProperty(title, cv2.WND_PROP_VISIBLE) >= 1:
+        key = cv2.waitKey(50) & 0xFF
     cv2.destroyAllWindows()
+    if live and key not in ENTER:
+        raise SystemExit("Aborted.")
+    if live:
+        path = save_profiles({name: profile for name, (profile, _) in live_artifacts.items()})
+        print(f"Saved live profiles in {path}")
+        for name, (_, overlay) in live_artifacts.items():
+            path = LIVE_CALIB_DIR / f"floor_map_{name}.jpg"
+            if not cv2.imwrite(str(path), overlay, [cv2.IMWRITE_JPEG_QUALITY, 85]):
+                raise OSError(f"Could not write {path}")
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0], formatter_class=argparse.RawDescriptionHelpFormatter,
                                  epilog="\n".join(__doc__.strip().splitlines()[1:]))
-    ap.add_argument("cameras", nargs="+", help="names of the camera positions, e.g. a1 b1; writes calibration/floor_map_<name>.*")
+    ap.add_argument("cameras", nargs="*", help="names of the camera positions, e.g. a1 b1; writes calibration/floor_map_<name>.*")
     ap.add_argument("--video", nargs="+", help="one video per camera, to pick the calibration frame from (saved as frames/<name>.png); "
                                                "without it, calibration/frames/<name>.png is read")
+    ap.add_argument("--basler", nargs=2, action="append", metavar=("SERIAL", "VIEW"), help="capture a live calibration frame, repeat per view")
     ap.add_argument("--frame", type=int, default=0, help="frame index the frame picker starts at (default 0)")
     how = ap.add_mutually_exclusive_group(required=True)
     how.add_argument("--rect", nargs=2, type=float, metavar=("W", "H"), help="click the 4 corners of a measured W x H m rectangle on the floor")
     how.add_argument("--metres", action="store_true", help=f"click {POINTS} floor points and type their x y in metres")
-    main(ap.parse_args())
+    a = ap.parse_args()
+    try:
+        if a.basler:
+            if a.cameras or a.video is not None:
+                ap.error("--basler cannot be combined with recorded or saved-frame inputs")
+            validate_pairs(a.basler)
+            a.cameras = [view for _, view in a.basler]
+        elif not a.cameras:
+            ap.error("provide camera view names or --basler SERIAL VIEW")
+        if a.rect is not None and not all(np.isfinite(metres) and metres > 0 for metres in a.rect):
+            ap.error("--rect requires two positive finite dimensions")
+        main(a)
+    except (OSError, RuntimeError, ValueError) as exc:
+        ap.exit(1, f"{exc}\n")
+    except KeyboardInterrupt:
+        ap.exit(130)

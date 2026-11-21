@@ -1,4 +1,4 @@
-"""Merge the two cameras' person tracks into one set of people in room coordinates and decide who the owner is; average the robot and the ball, and the robot's heading."""
+"""Fuse person tracks, robot and ball positions, and robot heading across camera views."""
 from collections import deque
 
 import numpy as np
@@ -91,14 +91,22 @@ class Fusion:
                          if tid in self.cameras[cam] and compatible(self.cameras[cam][tid].sim, p.sim)}
 
     def split_people(self):
-        """A person whose two tracks stay more than SPLIT_M apart for SPLIT_S is two people: the second track leaves."""
+        """Detach a member that persistently disagrees with the other fresh views."""
         for p in self.people.values():
-            if not self.apart(p):
-                p.apart_since = None
-            elif p.apart_since is None:
-                p.apart_since = self.t
-            elif self.t - p.apart_since > SPLIT_S:
-                p.members.popitem()
+            points = {cam: self.cameras[cam][tid].floor_m for cam, tid in p.members.items()
+                      if self.cameras[cam][tid].placed == self.t}
+            outlier = self.outlier(points)
+            if outlier is None:
+                if p.apart_since is not None:
+                    suspect, since = p.apart_since
+                    if (suspect not in p.members or self.t - since > TRACK_TIMEOUT_S
+                            or suspect in points and len(points) > 1):
+                        p.apart_since = None
+            elif p.apart_since is None or p.apart_since[0] != outlier:
+                p.apart_since = outlier, self.t
+            elif self.t - p.apart_since[1] > SPLIT_S:
+                del p.members[outlier]
+                p.offset.pop(outlier, None)
                 p.apart_since = None
 
     def attach_free_tracks(self):
@@ -123,19 +131,22 @@ class Fusion:
     def place_people(self):
         """Every person's position, heading and face score, from their tracks in this frame."""
         for p in self.people.values():
-            tracks = {cam: self.cameras[cam][tid] for cam, tid in p.members.items()}
-            placed = {cam: tr for cam, tr in tracks.items() if tr.placed == self.t}
-            if placed:
-                self.place(p, placed)
-            measured = [(tr.heading, tr.heading_w) for tr in tracks.values() if tr.heading is not None and tr.heading_at == self.t]
-            heading = combine(measured)
-            if heading is not None:
-                p.heading, p.heading_at = heading, self.t
-            elif self.t - p.heading_at > HEADING_HOLD_S:
-                p.heading = None
-            sims = [tr.sim for tr in tracks.values() if tr.sim is not None]
-            if sims:
-                p.sim = max(sims)
+            self.place_person(p)
+
+    def place_person(self, p):
+        tracks = {cam: self.cameras[cam][tid] for cam, tid in p.members.items()}
+        placed = {cam: tr for cam, tr in tracks.items() if tr.placed == self.t}
+        if placed:
+            self.place(p, placed)
+        measured = [(tr.heading, tr.heading_w) for tr in tracks.values() if tr.heading is not None and tr.heading_at == self.t]
+        heading = combine(measured)
+        if heading is not None:
+            p.heading, p.heading_at = heading, self.t
+        elif self.t - p.heading_at > HEADING_HOLD_S:
+            p.heading = None
+        sims = [tr.sim for tr in tracks.values() if tr.sim is not None]
+        if sims:
+            p.sim = max(sims)
 
     def merge_people(self):
         """Two people with tracks from different cameras standing on the same spot are one person: the older one keeps the id."""
@@ -145,6 +156,8 @@ class Fusion:
                     break
                 if self.same_spot(p, q):
                     p.members.update(q.members)
+                    p.trail.pop()  # replace this update's position with the combined measurement
+                    self.place_person(p)
                     p.sim = max((s for s in (p.sim, q.sim) if s is not None), default=None)
                     p.label = "owner" if "owner" in (p.label, q.label) else p.label
                     del self.people[q.id]
@@ -192,10 +205,13 @@ class Fusion:
         return any(p.floor_m is not None and not self.open_for(p, cam) and compatible(track.sim, p.sim)
                    and distance(track.floor_m, p.floor_m) <= SECOND_BOX_M for p in self.people.values())
 
-    def apart(self, p):
-        """True if both cameras place the person in this frame, more than SPLIT_M apart."""
-        tracks = [self.cameras[cam][tid] for cam, tid in p.members.items()]
-        return len(tracks) == 2 and all(tr.placed == self.t for tr in tracks) and distance(tracks[0].floor_m, tracks[1].floor_m) > SPLIT_M
+    def outlier(self, points):
+        """Return the fresh member with the most disagreements. Ties favor earlier members."""
+        disagreements = {cam: sum(distance(point, other) > SPLIT_M for other in points.values())
+                         for cam, point in points.items()}
+        if any(disagreements.values()):
+            return max(reversed(disagreements), key=disagreements.get)
+        return None
 
     def place(self, p, placed):
         """Position of a person from their tracks placed in this frame ({camera: track})."""
