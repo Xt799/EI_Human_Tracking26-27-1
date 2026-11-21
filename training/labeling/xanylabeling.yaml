@@ -4,7 +4,9 @@
 # Key 5: rectangle around the whole robot.
 # Wheel numbering, seen from the robot (front = the gripper side):
 #   wheel_1 front left, wheel_2 front right, wheel_3 rear left, wheel_4 rear right.
-# Click where the wheel touches the floor, in the middle of its width. A wheel you cannot see: leave it out.
+# Click the centre of the wheel (easier to hit the same way every time than its floor contact). All four centres are at
+# the same height, so the robot's heading from them is exact on the floor map; for the position, the wheel radius is
+# corrected in code. A wheel you cannot see: leave it out.
 
 labels:
   - wheel_1
