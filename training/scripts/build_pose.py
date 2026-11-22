@@ -3,7 +3,8 @@
     uv run python training/scripts/build_pose.py
 
 Splits come from dataset/splits.yaml (stretches of time, both cameras of a moment in the same split). Only images with
-at least one wheel point are used. The robot box comes from the robot model; when it misses the robot (a person in
+at least one wheel point are used, and of near-identical views of one camera only the first: the robot in the same place
+with the same look (nothing new in front of it) teaches nothing new and would only weigh that view more. The robot box comes from the robot model; when it misses the robot (a person in
 front), the box is drawn around the wheel points. Point visibility: 2 = seen, 1 = hidden but known ("difficult"),
 0 = not labelled. Output: training/ds_pose/ (images, labels, data.yaml).
 """
@@ -14,35 +15,41 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tracking"))
 import common  # noqa: E402
+sys.path.insert(0, str(Path(__file__).parent))
+from dataset_splits import load as load_splits, split_of  # noqa: E402
+from make_paired_frames import thumb  # noqa: E402
 
 OUT = ROOT / "training" / "ds_pose"
 WHEELS = ["wheel_1", "wheel_2", "wheel_3", "wheel_4"]
-FLIP = [1, 0, 3, 2]          # a mirrored image swaps left and right wheels
+FLIP = [2, 3, 0, 1]          # a mirrored image swaps left and right wheels: wheel_1 <-> wheel_3, wheel_2 <-> wheel_4
 MARGIN = 0.25                # box around the wheel points when the robot model misses: grow by this share of its size
+SAME_PLACE = 0.05            # near-identical view: robot box centre moved less than this share of the box size ...
+SAME_LOOK = 0.95             # ... and robot thumbnails correlate above this
 
 
 def main():
     from ultralytics import YOLO
     model = YOLO(common.OBJECT_MODEL_PATH)
-    splits = yaml.safe_load((ROOT / "dataset" / "splits.yaml").read_text())
+    splits = load_splits()
     shutil.rmtree(OUT, ignore_errors=True)
     (OUT / "images").mkdir(parents=True)
     (OUT / "labels").mkdir(parents=True)
     lists = {"train": [], "val": [], "test": []}
     counts = {k: [0, 0, 0] for k in lists}          # images, points seen, points hidden
-    for rec, parts in splits.items():
+    dropped = 0
+    kept_views = {}                                  # (recording, camera) -> [(centre, size, thumbnail)]
+    for rec in splits:
         for js in sorted((ROOT / "dataset" / rec).glob("camera_*/*.json")):
             d = json.loads(js.read_text(encoding="utf-8"))
             pts = {s["label"]: (s["points"][0], 1 if s.get("difficult") else 2) for s in d["shapes"] if s["label"] in WHEELS}
             if not pts:
                 continue
             frame = int(js.stem[1:])
-            split = next((k for k, (lo, hi) in parts.items() if lo <= frame <= hi), None)
+            split = split_of(splits, rec, js.parent.name, frame)
             if split is None:
                 continue
             img_path = js.with_suffix(".jpg")
@@ -61,6 +68,12 @@ def main():
             x1, y1 = min(x1, xy[:, 0].min() - 3), min(y1, xy[:, 1].min() - 3)    # the box must hold every point
             x2, y2 = max(x2, xy[:, 0].max() + 3), max(y2, xy[:, 1].max() + 3)
             x1, y1, x2, y2 = max(x1, 0), max(y1, 0), min(x2, w - 1), min(y2, h - 1)
+            centre, size, look = np.array([(x1 + x2) / 2, (y1 + y2) / 2]), max(x2 - x1, y2 - y1), thumb(img, (x1, y1, x2, y2))
+            views = kept_views.setdefault((rec, js.parent.name), [])
+            if any(np.linalg.norm(centre - c) < SAME_PLACE * s and look @ t / look.size > SAME_LOOK for c, s, t in views):
+                dropped += 1
+                continue
+            views.append((centre, size, look))
             kp = []
             for wl in WHEELS:
                 if wl in pts:
@@ -80,6 +93,7 @@ def main():
     (OUT / "data.yaml").write_text(
         f"path: {OUT.as_posix()}\ntrain: train.txt\nval: val.txt\ntest: test.txt\n"
         f"kpt_shape: [4, 3]\nflip_idx: {FLIP}\nkpt_names:\n  0: [{', '.join(WHEELS)}]\nnames:\n  0: robot\n")
+    print(f"{dropped} near-identical views left out")
     for k, (n, seen, hidden) in counts.items():
         print(f"{k}: {n} images, {seen} wheel points seen, {hidden} hidden")
     print(f"-> {OUT}")

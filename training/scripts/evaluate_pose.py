@@ -2,10 +2,14 @@
 
     uv run python training/scripts/evaluate_pose.py training/runs/yolo26n_pose/weights/best.pt [--split test]
 
-Heading = direction on the floor from the middle of the rear wheels (wheel_3, wheel_4) to the middle of the front wheels
-(wheel_1, wheel_2); with only one side known, that side's rear -> front direction. Wheel points are mapped to the floor
+Heading = direction on the floor the robot faces: with all four wheels, perpendicular to the line between the middles of
+the right side (wheel_1, wheel_2) and the left side (wheel_3, wheel_4), the sides being ~33 cm apart, pointing to the
+front pair (wheel_1, wheel_3) rather than the rear pair (wheel_2, wheel_4), which are only ~13 cm behind; with only one
+side known, that side's rear -> front direction (wheel_2 -> wheel_1, wheel_4 -> wheel_3). Wheel points are mapped to the floor
 with the camera's floor map (the labelled points agree across the two views as floor points, ~3 cm).
-Reference heading of a moment: the labels of both views together on the floor.
+Reference heading of a moment: the labels of both views together on the floor (paired recording with floor maps);
+otherwise each image's own labels, on its floor map or, without one, in the image (perspective-distorted, but it still
+shows whether the direction is right). Results are reported per room and camera.
 Predicted heading: per camera from its 4 predicted points, and both cameras together (unit vectors weighted by the
 points' confidence).
 --crop: two-stage, as at run time: the robot model finds the box, the pose model runs on the square crop around it
@@ -23,21 +27,27 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tracking"))
 import common  # noqa: E402
+sys.path.insert(0, str(Path(__file__).parent))
+from dataset_splits import load as load_splits, split_of  # noqa: E402
 
 WHEELS = ["wheel_1", "wheel_2", "wheel_3", "wheel_4"]
-CAMS = ["camera_1", "camera_2"]
+FRONT, REAR = (0, 2), (1, 3)       # wheel indices: front pair wheel_1 + wheel_3, rear pair wheel_2 + wheel_4
 
 
 def heading(pts):
     """pts: {wheel index: floor xy}. Unit heading vector or None."""
-    front = [pts[i] for i in (0, 1) if i in pts]
-    rear = [pts[i] for i in (2, 3) if i in pts]
-    if len(front) == 2 and len(rear) == 2:
-        v = np.mean(front, 0) - np.mean(rear, 0)
-    elif 0 in pts and 2 in pts:
-        v = pts[0] - pts[2]
-    elif 1 in pts and 3 in pts:
-        v = pts[1] - pts[3]
+    if len(pts) == 4:
+        # front and rear axles are only ~13 cm apart, the two sides ~33 cm: the axis comes from the sides (perpendicular
+        # to the right side -> left side line), only its sign from front vs rear
+        side = (pts[2] + pts[3] - pts[0] - pts[1]) / 2
+        v = np.array([side[1], -side[0]])
+        fr = (pts[0] + pts[2] - pts[1] - pts[3]) / 2
+        if v @ fr < 0:
+            v = -v
+    elif 0 in pts and 1 in pts:
+        v = pts[0] - pts[1]
+    elif 2 in pts and 3 in pts:
+        v = pts[2] - pts[3]
     else:
         return None
     n = np.linalg.norm(v)
@@ -85,60 +95,65 @@ def main():
         k = int(r.boxes.conf.argmax())
         return r.keypoints.xy[k].cpu().numpy() / f + (ox, oy), r.keypoints.conf[k].cpu().numpy()
     recs = yaml.safe_load((ROOT / "dataset" / "recordings.yaml").read_text())["recordings"]
-    splits = yaml.safe_load((ROOT / "dataset" / "splits.yaml").read_text())
+    splits = load_splits()
 
     px_err = {2: [], 1: []}          # visibility -> pixel errors
-    errs = {"camera_1": [], "camera_2": [], "both": []}
+    errs = {}                        # "<room> <camera>" / "<room> both" -> heading errors in degrees
     found, total = 0, 0
-    for rec, parts in splits.items():
-        lo, hi = parts[a.split]
-        floor = {c: common.load_floor_map(recs[rec]["cameras"][c]["floor_map"]) for c in CAMS}
-        stems = sorted({p.stem for p in (ROOT / "dataset" / rec).glob("camera_*/*.json") if lo <= int(p.stem[1:]) <= hi})
+    for rec in splits:
+        cams = recs[rec]["cameras"]
+        # wheel points to the plane the heading is measured in: the floor map, or the image itself without one
+        # (an image angle is distorted by the perspective, but still shows whether the model gets the direction)
+        floor = {c: common.load_floor_map(v["floor_map"]) if v.get("floor_map") else None for c, v in cams.items()}
+        paired = recs[rec].get("offset_frames") is not None and all(m is not None for m in floor.values())
+        stems = sorted({p.stem for p in (ROOT / "dataset" / rec).glob("camera_*/*.json")})
+        room = recs[rec]["room"]
         for st in stems:
-            ref_floor, pred = {}, {}
-            for c in CAMS:
+            ref_pts, pred, own_ref = {}, {}, {}
+            for c in cams:
                 js = ROOT / "dataset" / rec / c / f"{st}.json"
+                if not js.exists() or split_of(splits, rec, c, int(st[1:])) != a.split:
+                    continue
                 labels = {}
-                if js.exists():
-                    for s in json.loads(js.read_text(encoding="utf-8"))["shapes"]:
-                        if s["label"] in WHEELS:
-                            labels[WHEELS.index(s["label"])] = (np.array(s["points"][0]), 1 if s.get("difficult") else 2)
+                for s in json.loads(js.read_text(encoding="utf-8"))["shapes"]:
+                    if s["label"] in WHEELS:
+                        labels[WHEELS.index(s["label"])] = (np.array(s["points"][0]), 1 if s.get("difficult") else 2)
+                if not labels:
+                    continue
+                to_plane = (lambda q, H=floor[c]: cv2.perspectiveTransform(np.float32(q).reshape(1, 1, 2), H)[0, 0]) if floor[c] is not None else (lambda q: np.float32(q))
                 for i, (p, _) in labels.items():
-                    ref_floor.setdefault(i, []).append(cv2.perspectiveTransform(p.reshape(1, 1, 2).astype(np.float32), floor[c])[0, 0])
-                img = cv2.imread(str(ROOT / "dataset" / rec / c / f"{st}.jpg"))
-                res = predict(img)
-                if labels:
-                    total += 1
+                    ref_pts.setdefault(i, []).append(to_plane(p))
+                own_ref[c] = heading({i: to_plane(p) for i, (p, _) in labels.items()})
+                total += 1
+                res = predict(cv2.imread(str(js.with_suffix(".jpg"))))
                 if res is None:
                     continue
                 kxy, kc = res
-                if labels:
-                    found += 1
-                    for i, (p, v) in labels.items():
-                        px_err[v].append(float(np.linalg.norm(kxy[i] - p)))
-                fl = {i: cv2.perspectiveTransform(kxy[i].reshape(1, 1, 2).astype(np.float32), floor[c])[0, 0] for i in range(4)}
-                pred[c] = (heading(fl), float(kc.mean()))
-            ref = heading({i: np.mean(v, 0) for i, v in ref_floor.items()})
-            if ref is None:
-                continue
-            for c in CAMS:
-                if c in pred and pred[c][0] is not None:
-                    errs[c].append(angle(pred[c][0], ref))
+                found += 1
+                for i, (p, v) in labels.items():
+                    px_err[v].append(float(np.linalg.norm(kxy[i] - p)))
+                pred[c] = (heading({i: to_plane(kxy[i]) for i in range(4)}), float(kc.mean()))
+            # paired: both views together are the reference on the shared floor; otherwise each view's own labels
+            ref = heading({i: np.mean(v, 0) for i, v in ref_pts.items()}) if paired else None
+            for c, (h, _) in pred.items():
+                r = ref if paired else own_ref.get(c)
+                if h is not None and r is not None:
+                    errs.setdefault(f"{room} {c}", []).append(angle(h, r))
             vs = [(h, w) for h, w in pred.values() if h is not None]
-            if vs:
-                s = sum(h * w for h, w in vs)
-                if np.linalg.norm(s) > 1e-6:
-                    errs["both"].append(angle(s / np.linalg.norm(s), ref))
+            if paired and ref is not None and vs:
+                v = sum(h * w for h, w in vs)
+                if np.linalg.norm(v) > 1e-6:
+                    errs.setdefault(f"{room} both", []).append(angle(v / np.linalg.norm(v), ref))
 
     print(f"split {a.split}: robot found in {found}/{total} labelled images")
     for v, name in ((2, "seen"), (1, "hidden")):
         e = np.array(px_err[v])
         if len(e):
             print(f"wheel points {name}: n={len(e)}, median {np.median(e):.1f} px, 90% {np.percentile(e, 90):.1f} px")
-    for k, e in errs.items():
+    for k, e in sorted(errs.items()):
         e = np.array(e)
         if len(e):
-            print(f"heading {k:9s}: n={len(e)}, median {np.median(e):.1f} deg, mean {e.mean():.1f} deg, "
+            print(f"heading {k:16s}: n={len(e)}, median {np.median(e):.1f} deg, mean {e.mean():.1f} deg, "
                   f"within 15 deg {np.mean(e <= 15):.0%}, flipped (>90 deg) {np.mean(e > 90):.0%}")
 
 

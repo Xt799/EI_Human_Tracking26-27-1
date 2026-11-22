@@ -3,7 +3,8 @@
 #   powershell -File training/labeling/label.ps1 dataset/room_1_20261012_1800/camera_1
 #
 # X-AnyLabeling is not part of this repository. Set $env:XANYLABELING to its executable, or it is looked up in
-# D:\lali\Workspace\X-Anylabeling\.venv-cu12\Scripts\xanylabeling.exe.
+# D:\lali\Workspace\X-Anylabeling\.venv-cu12\Scripts\xanylabeling.exe. It is started through xanylabeling_heading.py
+# with the Python next to that executable, which adds a live heading arrow drawn from the wheel points.
 # Settings changed in the app are saved to .xanylabeling/ in the repository (git-ignored), not to your home folder.
 param([Parameter(Mandatory = $true)][string]$Folder)
 
@@ -16,4 +17,5 @@ $images = Resolve-Path (Join-Path $repo $Folder)
 $workDir = Join-Path $repo ".xanylabeling"
 New-Item -ItemType Directory -Force $workDir | Out-Null
 
-& $exe --work-dir $workDir --config (Join-Path $PSScriptRoot "xanylabeling.yaml") --filename $images --output $images --nodata --autosave
+$python = Join-Path (Split-Path $exe) "python.exe"
+& $python (Join-Path $PSScriptRoot "xanylabeling_heading.py") --work-dir $workDir --config (Join-Path $PSScriptRoot "xanylabeling.yaml") --filename $images --output $images --nodata --autosave

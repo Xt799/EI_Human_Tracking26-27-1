@@ -8,12 +8,12 @@
       "score": null,
       "points": [
         [
-          942.6516723632812,
-          693.65673828125
+          948.1,
+          683.6
         ]
       ],
       "group_id": null,
-      "description": "auto: projected from camera_2",
+      "description": "",
       "difficult": true,
       "shape_type": "point",
       "flags": {},
@@ -30,8 +30,42 @@
         ]
       ],
       "group_id": null,
-      "description": "auto: projected from camera_2",
+      "description": "",
       "difficult": true,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "wheel_1",
+      "score": null,
+      "points": [
+        [
+          981.7,
+          723.0
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "wheel_2",
+      "score": null,
+      "points": [
+        [
+          961.2,
+          731.9
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "difficult": false,
       "shape_type": "point",
       "flags": {},
       "attributes": {},

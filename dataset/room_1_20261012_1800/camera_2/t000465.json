@@ -13,7 +13,7 @@
         ]
       ],
       "group_id": null,
-      "description": "auto: copied from t000000 (robot not moved)",
+      "description": "",
       "difficult": false,
       "shape_type": "point",
       "flags": {},
@@ -30,7 +30,7 @@
         ]
       ],
       "group_id": null,
-      "description": "auto: copied from t000000 (robot not moved)",
+      "description": "",
       "difficult": false,
       "shape_type": "point",
       "flags": {},
@@ -47,7 +47,7 @@
         ]
       ],
       "group_id": null,
-      "description": "auto: copied from t000000 (robot not moved)",
+      "description": "",
       "difficult": true,
       "shape_type": "point",
       "flags": {},
@@ -64,7 +64,7 @@
         ]
       ],
       "group_id": null,
-      "description": "auto: copied from t000000 (robot not moved)",
+      "description": "",
       "difficult": true,
       "shape_type": "point",
       "flags": {},

@@ -30,9 +30,21 @@ recordings:
       camera_2 is 1920x1200 (the others 1900x1200). Same room as the a1/a2/b1/b2 calibrations, but other camera
       positions, so there is no floor map yet.
 
-# Single-camera recordings (no partner): usable for single-view labels only.
-unpaired:
-  - videos/room_1/camera_1/basler_record_20261012_165859.mp4
-  - videos/room_1/camera_1/basler_record_20261012_171200.mp4
-  - videos/room_1/camera_1/basler_record_20261012_171939.mp4
-  - videos/room_2/camera_1/basler_record_20261110_163521.mp4
+# Single-camera recordings (no partner): single-view images, named t<frame>.jpg with the camera's own frame number.
+# floor_map is left null: the camera may have been moved between recordings.
+  room_1_20261012_1658:
+    room: room_1
+    cameras:
+      camera_1: {video: videos/room_1/camera_1/basler_record_20261012_165859.mp4, floor_map: null}
+  room_1_20261012_1712:
+    room: room_1
+    cameras:
+      camera_1: {video: videos/room_1/camera_1/basler_record_20261012_171200.mp4, floor_map: null}
+  room_1_20261012_1719:
+    room: room_1
+    cameras:
+      camera_1: {video: videos/room_1/camera_1/basler_record_20261012_171939.mp4, floor_map: null}
+  room_2_20261110_1635:
+    room: room_2
+    cameras:
+      camera_1: {video: videos/room_2/camera_1/basler_record_20261110_163521.mp4, floor_map: null}

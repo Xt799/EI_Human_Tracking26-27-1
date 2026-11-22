@@ -10,9 +10,9 @@
    appearance are the same in at least one camera (in the other one a person may stand in front of it). Each copied point
    is checked against the labelled image: if the image around it looks the same, it is visible, otherwise hidden.
 
-Added points have "description": "auto: ..." (where they come from); hand-placed ones are left exactly as they are.
-A rerun replaces the earlier "auto" points. --review writes overlay pages to training/ds_review/ (hand-placed: green,
-added visible: yellow, added hidden: red).
+Added points are ordinary wheel points (to be reviewed by hand like any other); points already there are left exactly as
+they are, so a rerun only fills what is still missing. --review writes overlay pages to training/ds_review/ (points
+already there: green, added visible: yellow, added hidden: red).
 """
 import argparse
 import json
@@ -95,15 +95,20 @@ def main():
     floor = {c: common.load_floor_map(rec["cameras"][c]["floor_map"]) for c in CAMS}
     to_other = {"camera_1": np.linalg.inv(floor["camera_2"]) @ floor["camera_1"],    # camera_1 px -> camera_2 px
                 "camera_2": np.linalg.inv(floor["camera_1"]) @ floor["camera_2"]}
-    stems = sorted(p.stem for p in (folder / "camera_1").glob("*.jpg"))
+    stems = sorted({p.stem for p in (folder / "camera_1").glob("*.jpg")} & {p.stem for p in (folder / "camera_2").glob("*.jpg")})   # paired moments
     img_shape = cv2.imread(str(folder / "camera_1" / f"{stems[0]}.jpg")).shape
 
-    # hand-placed points per moment and camera; earlier auto points are dropped
+    # the points already there, per moment and camera
     labels = {}
+    added = set()          # ids of the points added in this run (for the review colours)
+
+    def add(d, s):
+        d["shapes"].append(s)
+        added.add(id(s))
+
     for st in stems:
         for c in CAMS:
             d = load(folder / c / f"{st}.json", img_shape)
-            d["shapes"] = [s for s in d["shapes"] if not str(s.get("description", "")).startswith("auto")]
             labels[(st, c)] = d
     manual = {k: {s["label"]: s["points"][0] for s in d["shapes"] if s["label"] in WHEELS} for k, d in labels.items()}
     labelled = [st for st in stems if manual[(st, "camera_1")] or manual[(st, "camera_2")]]
@@ -121,7 +126,7 @@ def main():
                     continue
                 q = cv2.perspectiveTransform(np.array([[p]], np.float32), to_other[c])[0, 0]
                 full[(st, o)][w] = (q, True)
-                labels[(st, o)]["shapes"].append(shape(w, q, f"auto: projected from {c}", True))
+                add(labels[(st, o)], shape(w, q, "", True))
                 n_projected += 1
 
     # 2. copy to moments where the robot has not moved
@@ -158,7 +163,7 @@ def main():
         for c in CAMS:
             for w, (p, ref_hidden) in full[(ref, c)].items():
                 hidden = ref_hidden or ncc(gray(st, c), gray(ref, c), p) < VISIBLE_NCC
-                labels[(st, c)]["shapes"].append(shape(w, p, f"auto: copied from {ref} (robot not moved)", hidden))
+                add(labels[(st, c)], shape(w, p, "", hidden))
                 n_copied += 1
                 n_hidden += hidden
 
@@ -194,7 +199,7 @@ def main():
                 crop = cv2.resize(img[y0:y1, x0:x1], None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
                 for s in pts:
                     p = (np.array(s["points"][0]) - (x0, y0)) * 3
-                    col = (0, 255, 0) if not str(s["description"]).startswith("auto") else ((0, 0, 255) if s["difficult"] else (0, 255, 255))
+                    col = (0, 255, 0) if id(s) not in added else ((0, 0, 255) if s["difficult"] else (0, 255, 255))
                     cv2.circle(crop, tuple(p.astype(int)), 6, col, 2)
                     cv2.putText(crop, s["label"][-1], tuple((p + (7, -7)).astype(int)), 0, 0.6, col, 2)
                 cv2.putText(crop, f"{st} {c}", (5, 20), 0, 0.6, (255, 255, 255), 2)

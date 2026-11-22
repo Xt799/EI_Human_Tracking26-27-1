@@ -8,12 +8,12 @@
       "score": null,
       "points": [
         [
-          977.9,
-          741.5
+          980.2,
+          741.8
         ]
       ],
       "group_id": null,
-      "description": "auto: copied from t000000 (robot not moved)",
+      "description": "",
       "difficult": false,
       "shape_type": "point",
       "flags": {},
@@ -25,12 +25,12 @@
       "score": null,
       "points": [
         [
-          983.5,
-          725.4
+          981.0169491525423,
+          722.7118644067796
         ]
       ],
       "group_id": null,
-      "description": "auto: copied from t000000 (robot not moved)",
+      "description": "",
       "difficult": true,
       "shape_type": "point",
       "flags": {},
@@ -42,12 +42,12 @@
       "score": null,
       "points": [
         [
-          915.0,
-          729.0
+          913.3,
+          728.1
         ]
       ],
       "group_id": null,
-      "description": "auto: copied from t000000 (robot not moved)",
+      "description": "",
       "difficult": false,
       "shape_type": "point",
       "flags": {},
@@ -59,12 +59,12 @@
       "score": null,
       "points": [
         [
-          920.1,
-          713.0
+          918.2,
+          711.1
         ]
       ],
       "group_id": null,
-      "description": "auto: copied from t000000 (robot not moved)",
+      "description": "",
       "difficult": false,
       "shape_type": "point",
       "flags": {},

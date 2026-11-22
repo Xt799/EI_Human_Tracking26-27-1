@@ -20,6 +20,8 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tracking"))
 import common  # noqa: E402
+sys.path.insert(0, str(Path(__file__).parent))
+from dataset_splits import load as load_splits, ranges  # noqa: E402
 
 THUMB = 24
 
@@ -59,9 +61,10 @@ def main():
     a = ap.parse_args()
 
     rec = yaml.safe_load((ROOT / "dataset" / "recordings.yaml").read_text())["recordings"][a.recording]
-    splits = yaml.safe_load((ROOT / "dataset" / "splits.yaml").read_text())[a.recording]
     off = rec["offset_frames"]
     first, last = rec["paired_frames"]
+    splits = {k: [(max(lo, first), min(hi, last)) for lo, hi in rs if min(hi, last) >= max(lo, first)]
+              for k, rs in ranges(load_splits(), a.recording).items()}        # the paired part of each split
     from ultralytics import YOLO
     model = YOLO(common.OBJECT_MODEL_PATH)
     caps = {k: cv2.VideoCapture(str(ROOT / v["video"])) for k, v in rec["cameras"].items()}
@@ -89,11 +92,11 @@ def main():
     print(f"{len(cands)} moments with the robot in both views")
 
     rng = np.random.default_rng(0)
-    total = sum(hi - lo + 1 for lo, hi in splits.values())
+    total = sum(hi - lo + 1 for rs in splits.values() for lo, hi in rs)
     picked = []
-    for name, (lo, hi) in splits.items():
-        idx = [i for i, (f, _) in enumerate(cands) if lo <= f <= hi]
-        k = max(1, round(a.n * (hi - lo + 1) / total))
+    for name, rs in splits.items():
+        idx = [i for i, (f, _) in enumerate(cands) if any(lo <= f <= hi for lo, hi in rs)]
+        k = max(1, round(a.n * sum(hi - lo + 1 for lo, hi in rs) / total))
         sel = farthest(np.array([cands[i][1] for i in idx]), k, rng) if idx else []
         picked += [cands[idx[s]][0] for s in sel]
         print(f"  {name}: {len(sel)} of {len(idx)} moments")

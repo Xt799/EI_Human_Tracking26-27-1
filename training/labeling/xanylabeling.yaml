@@ -2,8 +2,9 @@
 #
 # Keys 1-4: point mode with the wheel label already chosen: press the key, click the wheel, next key.
 # Key 5: rectangle around the whole robot.
-# Wheel numbering, seen from the robot (front = the gripper side):
-#   wheel_1 front left, wheel_2 front right, wheel_3 rear left, wheel_4 rear right.
+# Wheel numbering, seen from above with the robot facing away (front = the gripper side):
+#   wheel_1 front right, wheel_2 rear right, wheel_3 front left, wheel_4 rear left.
+#   So wheel_1 + wheel_3 are the front pair, wheel_2 + wheel_4 the rear pair.
 # Click the centre of the wheel (easier to hit the same way every time than its floor contact). All four centres are at
 # the same height, so the robot's heading from them is exact on the floor map; for the position, the wheel radius is
 # corrected in code. A wheel you cannot see: leave it out.

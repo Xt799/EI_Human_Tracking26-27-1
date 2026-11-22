@@ -47,7 +47,7 @@
         ]
       ],
       "group_id": null,
-      "description": "auto: projected from camera_1",
+      "description": "",
       "difficult": true,
       "shape_type": "point",
       "flags": {},
@@ -64,7 +64,7 @@
         ]
       ],
       "group_id": null,
-      "description": "auto: projected from camera_1",
+      "description": "",
       "difficult": true,
       "shape_type": "point",
       "flags": {},
