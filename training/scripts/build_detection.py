@@ -4,7 +4,6 @@
 
 train:
 - dataset/detection/train/recordings/  our frames (reviewed boxes)
-- dataset/detection/train/screenshots/ a few pasted screenshots of the first room_1 videos (source frame unknown)
 - dataset/detection/train/coco/, openimages/   public ball images (no robot in them: they also teach the detector
                                        that people, clothes and furniture are not the robot)
 - dataset/robot_heading/train/ crops whose points were deleted: false robot detections (e.g. a printed shirt), as
@@ -95,11 +94,10 @@ def main():
     (OUT / "images").mkdir(parents=True)
     (OUT / "labels").mkdir(parents=True)
     own = [add(j, "") for j in sorted((DET / "train" / "recordings").glob("*.json"))]
-    shots = [add(j, "") for j in sorted((DET / "train" / "screenshots").glob("*.json"))]
     neg = [add(j, "neg_", empty=True) for j in negatives("train")]
     public = [add(j, "") for src in ("coco", "openimages") for j in pick_public(DET / "train" / src, a.public)]
-    own, shots, neg, public = ([p for p in x if p] for x in (own, shots, neg, public))
-    train = (own + shots + neg) * a.own_repeat + public
+    own, neg, public = ([p for p in x if p] for x in (own, neg, public))
+    train = (own + neg) * a.own_repeat + public
     val = [add(j, "") for j in sorted((DET / "val" / "recordings").glob("*.json"))] + \
           [add(j, "neg_", empty=True) for j in negatives("val")]
     val = [p for p in val if p]
@@ -107,7 +105,7 @@ def main():
     (OUT / "val.txt").write_text("\n".join(val) + "\n")
     (OUT / "data.yaml").write_text(f"path: {OUT.as_posix()}\ntrain: train.txt\nval: val.txt\nnames:\n"
                                    + "".join(f"  {i}: {c}\n" for i, c in enumerate(CLASSES)))
-    print(f"train: {len(own)} own frames, {len(shots)} screenshots, {len(neg)} false-detection crops "
+    print(f"train: {len(own)} own frames, {len(neg)} false-detection crops "
           f"(each x{a.own_repeat}), {len(public)} public ball images -> {len(train)} entries")
     print(f"val: {len(val)} images -> {OUT}")
 

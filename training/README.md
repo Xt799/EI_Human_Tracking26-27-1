@@ -17,7 +17,7 @@ uv run python training/scripts/build_detection.py     # -> training/ds_detect/
 uv run python training/scripts/train.py --model <start.pt> --data training/ds_detect/data.yaml --imgsz 1920 --batch 6 --epochs 10 --cache none --name <name>
 uv run python training/scripts/compare_detectors.py training/runs/<name>/weights/best.pt --imgsz 1920
 ```
-- Training set: our frames (`dataset/detection/train/recordings/` and `screenshots/`) and the false-detection crops of
+- Training set: our frames (`dataset/detection/train/recordings/`) and the false-detection crops of
   `dataset/robot_heading/` (no object in them), each listed 5 times (`--own-repeat`), plus 1000 images per public
   source (`--public`), half of them those with the smallest balls. The public images have no robot in them, so they
   also teach the detector that people, clothes and furniture are not the robot.

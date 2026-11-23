@@ -21,8 +21,6 @@ top-left corner in the lens-corrected frame (a point in the crop is (left + x, t
   - `recordings/` – lens-corrected frames of our recordings and their boxes, reviewed by hand. The room_1 frames of
     the single-camera recordings come from the first robot/ball dataset (in git history up to commit `5794c00`), cut
     again from the videos with lens correction;
-  - `screenshots/` (train only) – 16 pasted screenshots of the first room_1 videos, `pasted_<date>_<time>` (source
-    frame unknown, not lens-corrected);
   - `coco/`, `openimages/` (train only) – public ball images with their boxes (git-ignored, from `download_balls.py`).
 - `robot_heading/prelabels.json`, `detection/prelabels.json` – the pre-labels as the scripts wrote them. An image whose
   labels are still exactly these has not been reviewed and is left out of training.
