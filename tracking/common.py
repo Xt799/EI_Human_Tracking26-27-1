@@ -8,7 +8,7 @@ import numpy as np
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CALIB_DIR = os.path.join(SCRIPT_DIR, "calibration")
 POSE_MODEL_PATH = os.path.join(SCRIPT_DIR, "models", "yolo11s-pose.pt")
-OBJECT_MODEL_PATH = os.path.join(SCRIPT_DIR, "..", "training", "runs", "yolo26n_e100", "weights", "best.pt")
+OBJECT_MODEL_PATH = os.path.join(SCRIPT_DIR, "..", "training", "runs", "detector", "weights", "best.pt")
 RESULTS_DIR = os.path.join(SCRIPT_DIR, "..", "results")   # one position CSV per run, named by the start time
 
 POSE_CONF = 0.25      # minimum confidence for a person box

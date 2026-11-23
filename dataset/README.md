@@ -1,47 +1,63 @@
 # Dataset
 
-Labelled robot images. Most come from **paired** recordings: two cameras filming the same room at the same time, so
-labels made in one view can be checked against, or carried over to, the other view through the floor. Single-camera
-images add robot views the paired part lacks (other rooms, places and angles).
+Our own labelled images, from the recordings in `../videos/` (not in git). Two tasks:
+- `robot_heading/` – crops around the robot with a `front` and a `rear` point: which way the robot faces.
+- `detection/` – full frames with boxes around the robot and the ball, for the detector that finds them (and gives
+  the heading model its crop). Most of the detector's ball training data are public images, in `detection/train/coco/` and
+  `detection/train/openimages/` (git-ignored, downloaded by `download_balls.py`).
+
+Every task has a `train/` and a `val/` folder, nothing else. Which stretches of a recording go to which is set in
+`splits.yaml` (stretches of time, so neighbouring frames never end up on both sides); the scripts that add images put
+them in the right folder. Where an image comes from is in its name:
+`<recording>_<camera>_t<frame>` (the camera's own frame number), for a crop followed by `_x<left>_y<top>`, the crop's
+top-left corner in the lens-corrected frame (a point in the crop is (left + x, top + y) in the frame).
 
 ## Files
 - `recordings.yaml` – the recordings: the video of each camera, the floor map (camera position in
-  `tracking/calibration/`), and the frame offset between the two cameras.
-- `splits.yaml` – train / val / test as stretches of time per recording (per camera when the cameras are not paired);
-  both cameras of a paired moment are in the same split.
-- `<recording>/camera_1/`, `<recording>/camera_2/` – images and X-AnyLabeling labels (`.json`). Images are in Git LFS.
-  Inside a recording's paired stretch an image is named `t<camera_1 frame>.jpg` in both folders: the same name is the
-  same moment. Outside it (and in recordings without a partner) the name is the camera's own frame number.
-- `backgrounds/` – background photos for synthetic data (git-ignored).
+  `tracking/calibration/`), and the frame offset between paired cameras.
+- `splits.yaml` – train / val as stretches of time per recording (per camera when the cameras are not paired).
+- `robot_heading/train/`, `robot_heading/val/` – robot crops (`.jpg`) and their labels (`.json`).
+- `detection/train/`, `detection/val/` – one folder per source:
+  - `recordings/` – lens-corrected frames of our recordings and their boxes, reviewed by hand. The room_1 frames of
+    the single-camera recordings come from the first robot/ball dataset (in git history up to commit `5794c00`), cut
+    again from the videos with lens correction;
+  - `screenshots/` (train only) – 16 pasted screenshots of the first room_1 videos, `pasted_<date>_<time>` (source
+    frame unknown, not lens-corrected);
+  - `coco/`, `openimages/` (train only) – public ball images with their boxes (git-ignored, from `download_balls.py`).
+- `robot_heading/prelabels.json`, `detection/prelabels.json` – the pre-labels as the scripts wrote them. An image whose
+  labels are still exactly these has not been reviewed and is left out of training.
+- Images are in Git LFS.
 
-The first, single-camera robot/ball dataset is in `../dataset_old/` (git-ignored, kept locally; see
-[../training/README.md](../training/README.md) for how to restore it from git).
+Earlier datasets are only in the git history: the first single-camera robot/ball dataset (`dataset/{train,val,test}`)
+and the wheel-point dataset (frames labelled with the four wheel centres) are both in commit `5794c00`
+(`git checkout 5794c00 -- dataset` brings them back, together with the scripts of that commit).
 
-## Adding images
+## Robot heading
 ```
-uv run python training/scripts/make_paired_frames.py <recording> [--n 150]
+uv run python training/scripts/make_robot_crops.py [--step 10] [--heading-step 30] [--grid 4 3]
 ```
-Picks moments where the robot is seen by both cameras, as varied as possible, per split, and writes both views
-(lens-corrected, as `tracking/` sees them).
+Goes through every recording, sorts each robot sighting by room, camera, split, where in the frame it is (a `--grid`
+cell) and which way it faces (`--heading-step` degrees), and writes the clearest sighting of every such view that has
+no crop yet, pre-labelled. Every crop thus shows the robot at least a little differently from all the others.
+Labelling: key `1` front (middle of the front, where the gripper is), key `2` rear (middle of the back), both at the
+same height on the robot; a green arrow shows rear -> front. Delete both points if the heading cannot be seen or there
+is no robot (a false detection: it is kept as a negative example).
+Training: [../training/README.md](../training/README.md).
+
+## Detection
 ```
-uv run python training/scripts/make_single_frames.py <recording> <camera> [--n 50]
+uv run python training/scripts/make_detection_frames.py [--val-every 4] [--train-every 8] [--train-rooms room_2]
+uv run python training/scripts/download_balls.py      # public ball images -> detection/train/coco/, openimages/
 ```
-Single-camera images: picks robot views unlike the ones already in the folder (look and place in the image), skipping
-the paired stretch, and pre-labels the wheels with the current pose model as ordinary points, to be corrected by hand.
-Near-identical views are also left out when the training set is built (`build_pose.py`), so labelling more frames of a
-still robot adds nothing.
+Frames at fixed time steps (val: every camera's val stretch; train: the rooms given), pre-labelled with the current
+detector. Labelling: key `3` box around the whole robot, key `4` box around every ball. Training:
+[../training/README.md](../training/README.md).
 
 ## Labelling (X-AnyLabeling)
 ```
-powershell -File training/labeling/label.ps1 dataset/room_1_20261012_1800/camera_1
+powershell -File training/labeling/label.ps1 dataset/detection/val/recordings
 ```
-Keys `1`-`4` switch to point mode with the wheel label already set (`wheel_1` ... `wheel_4`): press the key, click the
-wheel, next key. Key `5` draws the robot box. Numbering, seen from above with the robot facing away (front = gripper
-side): `wheel_1` front right, `wheel_2` rear right, `wheel_3` front left, `wheel_4` rear left; the front pair is
-`wheel_1` + `wheel_3`, the rear pair `wheel_2` + `wheel_4`. Click the centre of the wheel (all four centres
-are at the same height, so the heading from them is exact on the floor map; the wheel radius is corrected in code for
-the position); leave out a wheel you cannot see. The settings are in `training/labeling/xanylabeling.yaml`; your global X-AnyLabeling
-settings are not changed.
+The settings are in `training/labeling/xanylabeling.yaml`; your global X-AnyLabeling settings are not changed.
 
 ## Pairing two cameras
 ```
@@ -51,13 +67,10 @@ It matches moving people and the robot between the two views and reports the off
 The guess comes from the file names (`basler_record_<date>_<hhmmss>`): the two recording PCs' clocks differ by whole
 hours, so compare minutes and seconds. Write the result into `recordings.yaml`.
 
-## Status
-| recording | offset | floor map | notes |
+## Recordings
+| recording | cameras | offset | floor map |
 |---|---|---|---|
-| `room_1_20261012_1800` | camera_1 = camera_2 − 23 frames | `low` / `opposite` | paired for the first 198 s (camera_2 length) |
-| `room_2_20261110_1709` | not found | none | no overlap in time found between the two videos |
-| `room_1_20261012_1658`, `_1712`, `_1719` | single camera | none | camera_1 only |
-| `room_2_20261110_1635` | single camera | none | camera_1 only |
-
-Test sets: `room_1_20261012_1800` 150–198 s (paired, but the robot stands in places also seen in training) and the last
-part of both `room_2_20261110_1709` videos (a room the paired data does not have).
+| `room_1_20261012_1800` | 1, 2 | camera_1 = camera_2 − 23 frames (camera_2 is 198 s long) | `low` / `opposite` |
+| `room_2_20261110_1709` | 1, 2 | not found: no overlap in time | none |
+| `room_1_20261012_1658`, `_1712`, `_1719` | 1 | – | none (camera_1 was moved after `_1712`) |
+| `room_2_20261110_1635` | 1 | – | none |

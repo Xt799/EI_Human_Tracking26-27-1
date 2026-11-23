@@ -8,29 +8,25 @@ screenshot_*.png
 # large / generated / downloadable
 videos/
 results/
-training/ds_full/
-training/ds_eval/
-training/ds_sync/
-training/ds_review/
-training/ds_pose/
-training/ds_pose_crop/
+training/ds_*/
+/runs/
 .xanylabeling/
 *.pt
-dataset/backgrounds/
+dataset/detection/train/coco/
+dataset/detection/train/openimages/
+training/cache/
 
-# the first robot/ball dataset (single camera, unpaired): kept locally only, it is in the git history up to the
-# commit that moved it here; the old training scripts read it from here
-dataset_old/
-
-# experimental runs: only the final YOLO26n model is committed
+# training runs: only the final models are committed (weights, settings, per-epoch scores)
 training/runs/*
-!training/runs/yolo26n_e100/
-training/runs/yolo26n_e100/*
-!training/runs/yolo26n_e100/weights/
-!training/runs/yolo26n_e100/args.yaml
-!training/runs/yolo26n_e100/results.csv
-training/runs/yolo26n_e100/weights/*
-!training/runs/yolo26n_e100/weights/best.pt
+!training/runs/detector/
+!training/runs/heading/
+training/runs/*/*
+!training/runs/*/weights/
+!training/runs/*/args.yaml
+!training/runs/*/results.csv
+training/runs/*/weights/*
+!training/runs/detector/weights/best.pt
+!training/runs/heading/weights/last.pt
 
 # people pose model used by tracking/ (stock Ultralytics file, never changes)
 !tracking/models/yolo11s-pose.pt
