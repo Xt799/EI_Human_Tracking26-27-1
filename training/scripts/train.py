@@ -1,9 +1,8 @@
-"""Fine-tune YOLO26n on the full 1920 px frames.  Run:  uv run python training/scripts/train.py [--epochs 100]
+"""Fine-tune a YOLO26 model.  Run:  uv run python training/scripts/train.py [--epochs 100]
 
-Default: the robot/ball detector on training/ds_full. The robot + wheel pose model:
-  --model yolo26n-pose.pt --data training/ds_pose/data.yaml --name yolo26n_pose
-The two-stage wheel model on robot crops (build_pose_crops.py):
-  --model yolo26n-pose.pt --data training/ds_pose_crop/data.yaml --name yolo26n_pose_crop --imgsz 320 --batch 32 --degrees 180 --mosaic 0
+Default: the robot/ball detector on full 1920 px frames (training/ds_detect, from build_detection.py). --model, --data,
+--degrees and --mosaic train other models, e.g. the heading model on robot crops: --model yolo26n-pose.pt
+--data training/ds_heading/data.yaml --imgsz 320 --batch 16 --degrees 180 --mosaic 0 (see training/README.md).
 """
 import argparse
 from pathlib import Path
@@ -21,7 +20,7 @@ def main():
     ap.add_argument("--imgsz", type=int, default=1920)
     ap.add_argument("--name", default="yolo26n")
     ap.add_argument("--model", default="yolo26n.pt", help="pretrained weights (file in training/ or a name Ultralytics downloads)")
-    ap.add_argument("--data", default=str(ROOT / "ds_full" / "data.yaml"))
+    ap.add_argument("--data", default=str(ROOT / "ds_detect" / "data.yaml"))
     ap.add_argument("--optimizer", default="auto", help="auto picks AdamW below 10000 iterations and MuSGD (the YOLO26 optimizer) above")
     ap.add_argument("--lr0", type=float, default=None, help="initial learning rate (default: the optimizer's own)")
     ap.add_argument("--degrees", type=float, default=8, help="random rotation range (180 = any angle)")
