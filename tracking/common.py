@@ -15,7 +15,7 @@ POSE_CONF = 0.25      # minimum confidence for a person box
 TRACKER = "bytetrack.yaml"
 KPT_CONF = 0.5        # a keypoint below this confidence is treated as not visible
 TRACK_TIMEOUT_S = 1.0 # a person or object not seen for this long is forgotten
-SMOOTH_ALPHA = 0.3    # weight of the newest value in a smoothed one (1 = no smoothing): track positions and learned camera offsets
+SMOOTH_HALF_S = 0.065 # smoothed track positions: a measurement counts half after this long (= weight 0.3 per frame at 30 fps)
 CAMERA_STEP_PX = 20  # a step this far straight down in the image points towards the camera on the floor
 
 # COCO keypoint indices of the pose model

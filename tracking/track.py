@@ -16,10 +16,10 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
-from common import (KPT_CONF, LEFT_ANKLE, OBJECT_MODEL_PATH, RESULTS_DIR, RIGHT_ANKLE, SMOOTH_ALPHA, TRACK_TIMEOUT_S, PeopleDetector,
+from common import (KPT_CONF, LEFT_ANKLE, OBJECT_MODEL_PATH, RESULTS_DIR, RIGHT_ANKLE, SMOOTH_HALF_S, TRACK_TIMEOUT_S, PeopleDetector,
                     camera_positions, lens_correction, load_floor_map, load_room, put_label, towards_camera)
 from faces import FaceEncoder, face_visible, load_owner
-from fusion import Fusion, compatible, fuse_objects
+from fusion import OWNER_SIM, STRANGER_SIM, Fusion, compatible, fuse_objects
 from orientation import HEADING_HOLD_S, blend, body_heading, degrees, floor_frame
 from room_map import RoomMap
 from sources import VideoSource
@@ -68,10 +68,11 @@ def box_floor_point(xyxy):
 
 
 class Track:
-    """A tracked object: smoothed floor position and when it was last placed."""
+    """A tracked object: smoothed floor position, the last measurement and when it was last placed."""
 
     def __init__(self):
         self.floor_m = None
+        self.raw_m = None            # the last measurement, unsmoothed
         self.placed = -1e9           # time of the last position update
 
     def fresh(self, t):
@@ -79,8 +80,13 @@ class Track:
         return t - self.placed <= TRACK_TIMEOUT_S
 
     def update_position(self, floor_m, t):
-        """Moves the smoothed position towards the new measurement; a position that is no longer fresh is replaced by it."""
-        self.floor_m = SMOOTH_ALPHA * floor_m + (1 - SMOOTH_ALPHA) * self.floor_m if self.fresh(t) else floor_m
+        """Moves the smoothed position towards the new measurement, the more the longer since the last one; a position that is no longer fresh is replaced by it."""
+        if self.fresh(t):
+            keep = 0.5 ** ((t - self.placed) / SMOOTH_HALF_S)
+            self.floor_m = keep * self.floor_m + (1 - keep) * floor_m
+        else:
+            self.floor_m = floor_m
+        self.raw_m = floor_m
         self.placed = t
 
 
@@ -91,6 +97,8 @@ class Person(Track):
         super().__init__()
         self.last_seen = -1e9        # time of the last detection, placed or not
         self.sim = None
+        self.last_look = None        # the previous clear face score
+        self.looked = -1e9           # when a clear face score last set or confirmed the similarity
         self.last_check = -1e9
         self.heading = None          # smoothed unit vector on the floor the body faces (orientation.py)
         self.heading_w = 0.0         # weight of the last heading measurement
@@ -104,9 +112,16 @@ class Person(Track):
         elif t - self.heading_at > HEADING_HOLD_S:
             self.heading = None
 
-    def compare(self, score):
-        """Folds one face score into the running similarity. A score that contradicts it restarts it: the track now follows someone else."""
-        self.sim = (score + self.sim) / 2 if self.sim is not None and compatible(score, self.sim) else score
+    def compare(self, score, t):
+        """Folds one face score into the running similarity. An unsure score (side view, blur) changes nothing. The similarity is set,
+        or restarted because the track now follows someone else, only by two clear scores in a row that agree: one odd look changes nothing."""
+        if STRANGER_SIM <= score < OWNER_SIM:
+            return
+        if self.sim is not None and compatible(score, self.sim):
+            self.sim, self.looked = (score + self.sim) / 2, t
+        elif self.last_look is not None and compatible(score, self.last_look):
+            self.sim, self.looked = (score + self.last_look) / 2, t
+        self.last_look = score
 
 
 class Camera:
@@ -149,7 +164,7 @@ def update_people(camera, encoder, t):
             person.last_check = t        # counts as a try even if no face is found in the crop
             score = encoder.score(camera.frame, kxy[i])
             if score is not None:
-                person.compare(score)
+                person.compare(score, t)
         seen.append((tid, boxes[i], kxy[i], kconf[i], pt if m is not None else None))
     for tid in [k for k, p in camera.people.items() if t - p.last_seen > TRACK_TIMEOUT_S]:
         del camera.people[tid]
@@ -182,21 +197,24 @@ def open_log():
     path = os.path.join(RESULTS_DIR, time.strftime("%Y%m%d_%H%M%S") + "_positions.csv")
     log = open(path, "w", newline="")
     writer = csv.writer(log)
-    writer.writerow(["frame", "t", "kind", "id", "label", "x", "y", "cameras", "sim", "heading_deg"])
+    writer.writerow(["frame", "t", "kind", "id", "label", "x", "y", "raw_x", "raw_y", "cameras", "sim", "heading_deg"])
     print(f"Positions are logged to {path}")
     return log, writer
 
 
 def log_positions(writer, frame_index, t, people, objects, found):
-    """One CSV row per person and object placed in this frame."""
+    """One CSV row per person whose position is known (cameras "held" and no raw position when none placed them in this frame) and per object placed in this frame."""
     for p in people:
-        if p.placed == t:
+        if p.located(t):
+            placed = p.placed == t
             writer.writerow([frame_index, f"{t:.3f}", "person", f"P{p.id}", p.label, f"{p.floor_m[0]:.3f}", f"{p.floor_m[1]:.3f}",
-                             "+".join(p.placed_by), "" if p.sim is None else f"{p.sim:.2f}",
+                             f"{p.raw_m[0]:.3f}" if placed else "", f"{p.raw_m[1]:.3f}" if placed else "",
+                             "+".join(p.placed_by) if placed else "held", "" if p.sim is None else f"{p.sim:.2f}",
                              "" if p.heading is None else f"{degrees(p.heading):.1f}"])
     for name, obj in objects.items():
         if obj.placed == t:
             writer.writerow([frame_index, f"{t:.3f}", name, name, name, f"{obj.floor_m[0]:.3f}", f"{obj.floor_m[1]:.3f}",
+                             f"{obj.raw_m[0]:.3f}", f"{obj.raw_m[1]:.3f}",
                              "+".join(sorted(cam for cam in found if name in found[cam])), "", ""])
 
 
@@ -253,8 +271,8 @@ def place_windows(cameras):
 
 
 def room_marks(people, objects, t):
-    """What the room map shows, as RoomMap.draw takes it: the people, and the robot and ball while their position is fresh."""
-    marks = [(p.floor_m, LABEL_COLOUR[p.label], f"P{p.id} {p.label}", p.trail, p.heading) for p in people if p.floor_m is not None]
+    """What the room map shows, as RoomMap.draw takes it: the people whose position is known, and the robot and ball while their position is fresh."""
+    marks = [(p.floor_m, LABEL_COLOUR[p.label], f"P{p.id} {p.label}", p.trail, p.heading) for p in people if p.located(t)]
     marks += [(obj.floor_m, LABEL_COLOUR[name], name, [], None) for name, obj in objects.items() if obj.fresh(t)]
     return marks
 
