@@ -1,9 +1,15 @@
 """
-Track people (owner / stranger), robot and ball from two cameras and show where they are in the room.
+Track people (owner / stranger), the robot with its heading and the ball from one or two cameras, and show where they
+are in the room.
 
-    uv run python tracking/track.py videos/a1.mp4 a1 videos/b1.mp4 b1
+    uv run python tracking/track.py --video VIDEO_1 --position a4 --video VIDEO_2 --position b4 [--offset 23]
+    uv run python tracking/track.py --video VIDEO [--position a4]
 
-The two videos must be simultaneous recordings of the same scene, starting on the same frame and with the same frame count.
+--position: the calibrated camera position the video was recorded from (its floor map in calibration/), right after
+its --video. It turns pixels into metres; without it the camera is shown in the image only (people, the robot with
+its heading arrow, the ball; no metres, no room map, no owner label). Two cameras are merged only if both have one.
+--offset N: the two videos start together, after skipping the first N frames of the second video (a negative N skips
+the first video's frames instead), so that they show the same moment.
 REALTIME below chooses between dropping frames to keep the video's pace and processing every frame.
 Keys: q or Esc quit, p pause, c continue. Positions are also written to results/<start time>_positions.csv.
 """
@@ -21,6 +27,7 @@ from common import (KPT_CONF, LEFT_ANKLE, OBJECT_MODEL_PATH, RESULTS_DIR, RIGHT_
 from faces import FaceEncoder, face_visible, load_owner
 from fusion import Fusion, compatible, fuse_objects
 from orientation import HEADING_HOLD_S, blend, body_heading, degrees, floor_frame
+from robot_heading import RobotHeading, floor_heading
 from room_map import RoomMap
 from sources import VideoSource
 
@@ -39,7 +46,7 @@ ARROW_M = 0.4                  # length of the heading arrow drawn on the floor 
 LEFT_KPTS = {1, 3, 5, 7, 9, 11, 13, 15}
 SKELETON = [(5, 7), (7, 9), (6, 8), (8, 10), (11, 13), (13, 15), (12, 14), (14, 16), (5, 6), (11, 12), (5, 11), (6, 12)]
 LABEL_COLOUR = {"unknown": (200, 200, 200), "owner": (255, 0, 0), "stranger": (0, 255, 255), "robot": (0, 200, 255), "ball": (0, 255, 0)}
-LEFT_COLOUR, RIGHT_COLOUR, BONE_COLOUR, DOT_COLOUR = (0, 0, 255), (0, 255, 0), (220, 220, 220), (255, 255, 255)
+LEFT_COLOUR, RIGHT_COLOUR, BONE_COLOUR, DOT_COLOUR, OUTLINE_COLOUR = (0, 0, 255), (0, 255, 0), (220, 220, 220), (255, 255, 255), (40, 40, 40)
 
 
 # ---- Floor positions ----
@@ -68,11 +75,14 @@ def box_floor_point(xyxy):
 
 
 class Track:
-    """A tracked object: smoothed floor position and when it was last placed."""
+    """A tracked person or object: smoothed floor position and heading, and when they were last updated."""
 
     def __init__(self):
         self.floor_m = None
         self.placed = -1e9           # time of the last position update
+        self.heading = None          # smoothed unit vector on the floor the person or robot faces
+        self.heading_w = 0.0         # weight of the last heading measurement
+        self.heading_at = -1e9       # time of the last heading measurement
 
     def fresh(self, t):
         """True while the position is at most TRACK_TIMEOUT_S old."""
@@ -83,6 +93,14 @@ class Track:
         self.floor_m = SMOOTH_ALPHA * floor_m + (1 - SMOOTH_ALPHA) * self.floor_m if self.fresh(t) else floor_m
         self.placed = t
 
+    def update_heading(self, measured, t):
+        """Folds one heading measurement (unit vector, weight) or None into the smoothed heading; drops a stale one."""
+        if measured is not None:
+            self.heading, self.heading_w = blend(self.heading, measured[0]), measured[1]
+            self.heading_at = t
+        elif t - self.heading_at > HEADING_HOLD_S:
+            self.heading = None
+
 
 class Person(Track):
     """A person tracked by one camera: a Track plus when it was last detected and the running face similarity to the owner."""
@@ -92,17 +110,6 @@ class Person(Track):
         self.last_seen = -1e9        # time of the last detection, placed or not
         self.sim = None
         self.last_check = -1e9
-        self.heading = None          # smoothed unit vector on the floor the body faces (orientation.py)
-        self.heading_w = 0.0         # weight of the last heading measurement
-        self.heading_at = -1e9       # time of the last heading measurement
-
-    def update_heading(self, measured, t):
-        """Folds one heading measurement (unit vector, weight) or None into the smoothed heading; drops a stale one."""
-        if measured is not None:
-            self.heading, self.heading_w = blend(self.heading, measured[0]), measured[1]
-            self.heading_at = t
-        elif t - self.heading_at > HEADING_HOLD_S:
-            self.heading = None
 
     def compare(self, score):
         """Folds one face score into the running similarity. A score that contradicts it restarts it: the track now follows someone else."""
@@ -110,14 +117,15 @@ class Person(Track):
 
 
 class Camera:
-    """One camera: its video, floor map, detector, the people it tracks and the last frame."""
+    """One camera: its video, floor map (None: no metres), detector, the people it tracks and the last frame."""
 
-    def __init__(self, video, name, room):
+    def __init__(self, video, name, floor_map, room, shift=0):
         self.name = name
         self.source = VideoSource(video)
-        self.H = load_floor_map(name)
-        self.floor_frame = floor_frame(self.H, (self.source.width / 2, self.source.height - 1))   # (handedness, w sign) of the floor map (orientation.py)
+        self.H = load_floor_map(floor_map) if floor_map else None
+        self.floor_frame = None if self.H is None else floor_frame(self.H, (self.source.width / 2, self.source.height - 1))   # (handedness, w sign) of the floor map (orientation.py)
         self.room = room             # room bounds in metres, shared by both cameras
+        self.shift = shift           # this video's frame = the first video's frame + shift
         self.detector = PeopleDetector()
         self.correct = lens_correction(self.source.width, self.source.height)
         self.people = {}
@@ -141,10 +149,11 @@ def update_people(camera, encoder, t):
         person = camera.people.setdefault(tid, Person())
         person.last_seen = t
         pt = person_floor_point(kxy[i], kconf[i])
-        m = to_metres(camera.H, pt, camera.room) if pt is not None else None
+        m = to_metres(camera.H, pt, camera.room) if pt is not None and camera.H is not None else None
         if m is not None:                # feet hidden or beyond the walls: this camera does not place the person; the other one may
             person.update_position(m, t)
-        person.update_heading(body_heading(kxy[i], kconf[i], boxes[i], camera.H, camera.floor_frame, pt), t)
+        if camera.H is not None:
+            person.update_heading(body_heading(kxy[i], kconf[i], boxes[i], camera.H, camera.floor_frame, pt), t)
         if encoder is not None and t - person.last_check >= FACE_EVERY_S and face_visible(kxy[i], kconf[i]):
             person.last_check = t        # counts as a try even if no face is found in the crop
             score = encoder.score(camera.frame, kxy[i])
@@ -156,8 +165,11 @@ def update_people(camera, encoder, t):
     return seen
 
 
-def detect_objects(camera, model):
-    """Robot and ball in the camera's frame, best box per class. Returns {name: (box, conf, floor point, metres)}."""
+def detect_objects(camera, model, heading_model):
+    """Robot and ball in the camera's frame, best box per class, and the robot's heading.
+    Returns {name: (box, conf, floor point, metres, heading)}; heading is (front px, rear px, unit vector on the floor,
+    confidence) for the robot when the heading model finds it, else None. Without a floor map, metres and the unit
+    vector are None."""
     r = model(camera.frame, imgsz=OBJECT_IMGSZ, conf=OBJECT_CONF, agnostic_nms=True, verbose=False)[0]
     best = {}
     for xyxy, conf, cls in zip(r.boxes.xyxy.cpu().numpy(), r.boxes.conf.cpu().numpy(), r.boxes.cls.cpu().numpy().astype(int)):
@@ -167,11 +179,21 @@ def detect_objects(camera, model):
     found = {}
     for name, (xyxy, conf) in best.items():
         pt = box_floor_point(xyxy)
-        m = to_metres(camera.H, pt, camera.room)
-        if m is not None:
-            if name == "robot":
+        m = None
+        if camera.H is not None:
+            m = to_metres(camera.H, pt, camera.room)
+            if m is None:                # beyond the walls: a detection on the wall
+                continue
+        heading = None
+        if name == "robot":
+            if m is not None:
                 m = m - ROBOT_RADIUS_M * towards_camera(camera.H, pt)   # from the near edge to the centre
-            found[name] = (xyxy, conf, pt, m)
+            measured = heading_model.measure(camera.frame, xyxy)
+            if measured is not None:
+                front, rear, h_conf = measured
+                u = floor_heading(camera.H, front, rear) if camera.H is not None else None
+                heading = (front, rear, u, h_conf)
+        found[name] = (xyxy, conf, pt, m, heading)
     return found
 
 
@@ -197,7 +219,8 @@ def log_positions(writer, frame_index, t, people, objects, found):
     for name, obj in objects.items():
         if obj.placed == t:
             writer.writerow([frame_index, f"{t:.3f}", name, name, name, f"{obj.floor_m[0]:.3f}", f"{obj.floor_m[1]:.3f}",
-                             "+".join(sorted(cam for cam in found if name in found[cam])), "", ""])
+                             "+".join(sorted(cam for cam in found if name in found[cam])), "",
+                             "" if obj.heading is None else f"{degrees(obj.heading):.1f}"])
 
 
 # ---- Drawing ----
@@ -225,29 +248,38 @@ def draw_person(canvas, H, fused, tid, box, kxy, kconf, pt, person):
         put_label(canvas, f"x {person.floor_m[0]:.2f} m  y {person.floor_m[1]:.2f} m{facing}", (int(pt[0]) + 10, int(pt[1]) - 10))
 
 
-def draw_object(canvas, name, box, conf, pt, m):
-    """Box, floor point and metre position of the robot or the ball."""
+def draw_object(canvas, name, box, conf, pt, m, heading, smoothed):
+    """Box, floor point and metre position of the robot or the ball; for the robot also the heading this camera
+    measured (arrow rear -> front on the robot) and the smoothed heading of the cameras on the floor in degrees."""
     x1, y1, x2, y2 = box.astype(int)
     cv2.rectangle(canvas, (x1, y1), (x2, y2), LABEL_COLOUR[name], 2)
     cv2.circle(canvas, tuple(pt.astype(int)), 6, DOT_COLOUR, -1)
-    put_label(canvas, f"{name} {conf:.2f}  x {m[0]:.2f} m  y {m[1]:.2f} m", (x1, y1 - 6))
+    if heading is not None:
+        front, rear = heading[0], heading[1]
+        tip = front + 0.6 * (front - rear)
+        for colour, thick in ((OUTLINE_COLOUR, 6), (LABEL_COLOUR[name], 3)):
+            cv2.arrowedLine(canvas, tuple(rear.astype(int)), tuple(tip.astype(int)), colour, thick, cv2.LINE_AA, tipLength=0.3)
+    facing = f"  facing {degrees(smoothed):.0f} deg" if smoothed is not None else ""
+    where = f"  x {m[0]:.2f} m  y {m[1]:.2f} m" if m is not None else ""
+    put_label(canvas, f"{name} {conf:.2f}{where}{facing}", (x1, y1 - 6))
 
 
-def camera_view(cam, seen, links, found, t, fps):
+def camera_view(cam, seen, links, found, objects, t, fps):
     """The camera's frame with its people and objects drawn on it, scaled for the screen."""
     canvas = cam.frame.copy()
     for tid, box, kxy, kconf, pt in seen:
         draw_person(canvas, cam.H, links.get((cam.name, tid)), tid, box, kxy, kconf, pt, cam.people[tid])
-    for name, (box, conf, pt, m) in found.items():
-        draw_object(canvas, name, box, conf, pt, m)
+    for name, (box, conf, pt, m, heading) in found.items():
+        draw_object(canvas, name, box, conf, pt, m, heading, objects[name].heading)
     put_label(canvas, f"{cam.name} | people {len(seen)} | {t:.1f} s | {fps:.1f} fps", (14, 36), bg=(230, 230, 230))
     return cv2.resize(canvas, (0, 0), fx=DISPLAY_SCALE, fy=DISPLAY_SCALE)
 
 
-def place_windows(cameras):
-    """Opens the three windows: the two camera views on the left, one above the other, the room map to their right."""
+def place_windows(cameras, with_room):
+    """Opens the windows: the camera views on the left, one above the other, the room map to their right."""
     w, h = int(cameras[0].source.width * DISPLAY_SCALE), int(cameras[0].source.height * DISPLAY_SCALE)
-    for name, x, y in ((cameras[0].name, 0, 0), (cameras[1].name, 0, h + 40), ("Room", w + 10, 0)):
+    windows = [(cam.name, 0, i * (h + 40)) for i, cam in enumerate(cameras)] + ([("Room", w + 10, 0)] if with_room else [])
+    for name, x, y in windows:
         cv2.namedWindow(name)
         cv2.moveWindow(name, x, y)
 
@@ -255,24 +287,48 @@ def place_windows(cameras):
 def room_marks(people, objects, t):
     """What the room map shows, as RoomMap.draw takes it: the people, and the robot and ball while their position is fresh."""
     marks = [(p.floor_m, LABEL_COLOUR[p.label], f"P{p.id} {p.label}", p.trail, p.heading) for p in people if p.floor_m is not None]
-    marks += [(obj.floor_m, LABEL_COLOUR[name], name, [], None) for name, obj in objects.items() if obj.fresh(t)]
+    marks += [(obj.floor_m, LABEL_COLOUR[name], name, [], obj.heading) for name, obj in objects.items() if obj.fresh(t)]
     return marks
 
 
+# ---- Command line ----
+class VideoArg(argparse.Action):
+    """--video: a new [path, position] pair; the position is filled in by a --position after it."""
+    def __call__(self, parser, namespace, value, option_string=None):
+        videos = getattr(namespace, self.dest) or []
+        setattr(namespace, self.dest, videos + [[value, None]])
+
+
+class PositionArg(argparse.Action):
+    """--position: the camera position of the --video given just before it."""
+    def __call__(self, parser, namespace, value, option_string=None):
+        videos = getattr(namespace, "video") or []
+        if not videos or videos[-1][1] is not None:
+            parser.error("give --position right after its --video")
+        videos[-1][1] = value
+
+
 # ---- Main loop ----
-def main(video_a, camera_a, video_b, camera_b):
-    room_m, grid_m = load_room((camera_a, camera_b))
-    cameras = [Camera(video_a, camera_a, room_m), Camera(video_b, camera_b, room_m)]
+def main(inputs):
+    """inputs: [(video, window name, floor map or None, shift)], one or two cameras."""
+    maps = [m for _, _, m, _ in inputs if m]
+    room_m, grid_m = load_room(maps) if maps else (None, None)
+    cameras = [Camera(v, name, m, room_m, shift) for v, name, m, shift in inputs]
+    start = max(0, -min(cam.shift for cam in cameras))
+    if start:                        # a later video starts earlier on the timeline: skip the first video's frames before it
+        cameras[0].source.read_at(start - 1)
     object_model = YOLO(OBJECT_MODEL_PATH)
+    heading_model = RobotHeading()
     signature, owner_video = load_owner()
     encoder = FaceEncoder(signature) if signature is not None else None
     print(f"Owner enrolled from: {owner_video}" if encoder else "No owner enrolled: everyone is 'unknown'.")
-    print(f"Inputs: {video_a} ({camera_a}), {video_b} ({camera_b})")
+    for v, name, m, shift in inputs:
+        print(f"Input: {v} ({'floor map ' + m if m else 'no floor map: image only'}{f', {shift:+d} frames' if shift else ''})")
 
-    room = RoomMap(room_m, grid_m)
+    room = RoomMap(room_m, grid_m) if room_m is not None else None
     fusion, objects = Fusion(), {name: Track() for name in OBJECTS}
     log, writer = open_log()
-    place_windows(cameras)
+    place_windows(cameras, room is not None)
 
     fps, n_frames, fps_t0, paused = 0.0, 0, time.time(), False
     try:
@@ -286,13 +342,13 @@ def main(video_a, camera_a, video_b, camera_b):
                     break
                 continue
             frame_index = cameras[0].source.due_index() if REALTIME else cameras[0].source.index() + 1
-            if not cameras[0].read(frame_index) or not cameras[1].read(frame_index):
+            if not all(cam.read(frame_index + cam.shift) for cam in cameras):
                 break
             t = cameras[0].source.time()
 
             seen = {cam.name: update_people(cam, encoder, t) for cam in cameras}
             links = fusion.update({cam.name: cam.people for cam in cameras}, t)
-            found = {cam.name: detect_objects(cam, object_model) for cam in cameras}
+            found = {cam.name: detect_objects(cam, object_model, heading_model) for cam in cameras}
             fuse_objects(objects, found, t)
             log_positions(writer, frame_index, t, fusion.people.values(), objects, found)
 
@@ -300,8 +356,9 @@ def main(video_a, camera_a, video_b, camera_b):
             if time.time() - fps_t0 >= 1.0:
                 fps, n_frames, fps_t0 = n_frames / (time.time() - fps_t0), 0, time.time()
             for cam in cameras:
-                cv2.imshow(cam.name, camera_view(cam, seen[cam.name], links, found[cam.name], t, fps))
-            cv2.imshow("Room", room.draw(room_marks(fusion.people.values(), objects, t)))
+                cv2.imshow(cam.name, camera_view(cam, seen[cam.name], links, found[cam.name], objects, t, fps))
+            if room is not None:
+                cv2.imshow("Room", room.draw(room_marks(fusion.people.values(), objects, t)))
 
             key = cv2.waitKey(1) & 0xFF
             if key in (27, ord("q")):
@@ -317,10 +374,17 @@ def main(video_a, camera_a, video_b, camera_b):
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
-    ap.add_argument("video_a", help="first video file")
-    ap.add_argument("camera_a", choices=camera_positions(), help="camera position of the first video (selects its floor map)")
-    ap.add_argument("video_b", help="second video file, recorded at the same time")
-    ap.add_argument("camera_b", choices=camera_positions(), help="camera position of the second video")
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--video", action=VideoArg, required=True, help="a video file; give it twice for two cameras")
+    ap.add_argument("--position", action=PositionArg, choices=camera_positions(),
+                    help="camera position the video before it was recorded from (its floor map)")
+    ap.add_argument("--offset", type=int, default=0,
+                    help="frames to skip at the start of the second video (negative: of the first) so both show the same moment")
     a = ap.parse_args()
-    main(a.video_a, a.camera_a, a.video_b, a.camera_b)
+    if len(a.video) > 2:
+        ap.error("at most two --video")
+    for v, _ in a.video:
+        if not os.path.exists(v):
+            ap.error(f"video not found: {v}")
+    shifts = [0, a.offset] if len(a.video) == 2 else [0]
+    main([(v, pos or f"video {i + 1}", pos, shift) for i, ((v, pos), shift) in enumerate(zip(a.video, shifts))])

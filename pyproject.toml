@@ -1,7 +1,7 @@
 [project]
 name = "ei-human-tracking"
 version = "0.1.0"
-description = "Robot and ball detection (training/, inference/) and two-camera tracking of people, owner, robot and ball in room coordinates (tracking/)"
+description = "Robot, ball and robot heading models (training/) and two-camera tracking of people, owner, robot and ball in room coordinates (tracking/)"
 requires-python = ">=3.11"
 dependencies = [
     "opencv-python",

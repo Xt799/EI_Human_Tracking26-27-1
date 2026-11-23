@@ -1,5 +1,6 @@
 # Recordings and how the cameras of one recording line up in time.
-# Videos are not in git: they live under videos/<room>/<camera>/ (see the root README).
+# Videos are not in git. Copy them anywhere under videos/ at the repository root: the scripts look a video up by its
+# file name (keep the original names), so the folder layout below is only how we sort them.
 #
 # offset_frames: frame on camera_1 = frame on camera_2 + offset_frames (the same moment).
 #   Found with training/scripts/sync_cameras.py; accuracy about +-3 frames.

@@ -1,4 +1,4 @@
-"""Merge the two cameras' person tracks into one set of people in room coordinates and decide who the owner is; average the robot and the ball."""
+"""Merge the two cameras' person tracks into one set of people in room coordinates and decide who the owner is; average the robot and the ball, and the robot's heading."""
 from collections import deque
 
 import numpy as np
@@ -31,11 +31,16 @@ def distance(a, b):
 
 
 def fuse_objects(objects, found, t):
-    """Robot and ball positions: the average of the cameras that see them in this frame. found: {camera: {name: (box, conf, pixel, metres)}}."""
+    """Robot and ball positions: the average of the cameras that see them in this frame; the robot's heading: the
+    cameras' headings weighted by the heading model's confidence, then smoothed over time.
+    found: {camera: {name: (box, conf, pixel, metres, heading or None)}}, heading = (front, rear, unit vector, conf)."""
     for name, obj in objects.items():
-        points = [found[cam][name][3] for cam in found if name in found[cam]]
+        seen = [found[cam][name] for cam in found if name in found[cam]]
+        points = [s[3] for s in seen if s[3] is not None]          # None: a camera without a floor map
         if points:
             obj.update_position(np.mean(points, axis=0), t)
+        heading = combine([(s[4][2], s[4][3]) for s in seen if s[4] is not None and s[4][2] is not None])
+        obj.update_heading((heading, 1.0) if heading is not None else None, t)
 
 
 class FusedPerson:

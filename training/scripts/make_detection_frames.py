@@ -1,57 +1,72 @@
 """Pick full frames for the robot + ball detector from our recordings and pre-label them with the current detector.
 
     uv run python training/scripts/make_detection_frames.py [--val-every 4] [--train-every 8] [--train-rooms room_2]
+    uv run python training/scripts/make_detection_frames.py --add-balls WEIGHTS [--conf 0.2] [--imgsz 1920]
 
-Frames are taken at fixed time steps, not chosen by the detector, so frames where it fails are in as well:
+New frames: taken at fixed time steps, not chosen by the detector, so frames where it fails are in as well:
 - val: every --val-every seconds of every camera's val stretch (dataset/splits.yaml), all rooms;
 - train: every --train-every seconds of the train stretches of --train-rooms (room_1 already has many training frames,
   from the first, single-camera dataset).
 Written lens-corrected (what tracking/ sees) to dataset/detection/<split>/recordings/<recording>_<camera>_t<frame>.jpg
-with an X-AnyLabeling label: rectangles robot and ball from the current detector, to be corrected by hand. The pre-labels are
-recorded in dataset/detection/prelabels.json; existing frames are not touched.
+with an X-AnyLabeling label: rectangles robot and ball from the current detector, to be corrected by hand. The
+pre-labels are recorded in dataset/detection/prelabels.json; existing frames are not touched.
+
+--add-balls: no new frames; every ball the given detector finds in the frames already there that does not overlap a
+ball box (IoU < 0.3) is added as a "ball" rectangle, for review. Robot boxes are not touched.
 """
 import argparse
 import json
-import sys
-from pathlib import Path
 
 import cv2
-import yaml
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "tracking"))
-sys.path.insert(0, str(Path(__file__).parent))
-import common  # noqa: E402
-from dataset_splits import load as load_splits, ranges  # noqa: E402
-from robot_crops import frame_name  # noqa: E402
+from dataset import DETECTION_DIR, ROOT, find_video, frame_name, load_splits, ranges, recordings, rect
+import common
 
-OUT = ROOT / "dataset" / "detection"
 CONF = 0.25
 
 
-def rect(label, b):
-    x1, y1, x2, y2 = (float(v) for v in b)
-    return {"label": label, "score": None, "points": [[x1, y1], [x2, y1], [x2, y2], [x1, y2]], "group_id": None,
-            "description": "", "difficult": False, "shape_type": "rectangle", "flags": {}, "attributes": {},
-            "kie_linking": []}
+def iou(a, b):
+    x1, y1, x2, y2 = max(a[0], b[0]), max(a[1], b[1]), min(a[2], b[2]), min(a[3], b[3])
+    inter = max(0, x2 - x1) * max(0, y2 - y1)
+    return inter / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter + 1e-9)
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--val-every", type=float, default=4.0)
-    ap.add_argument("--train-every", type=float, default=8.0)
-    ap.add_argument("--train-rooms", nargs="*", default=["room_2"])
-    a = ap.parse_args()
+def box_of(shape):
+    xs, ys = [p[0] for p in shape["points"]], [p[1] for p in shape["points"]]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def add_balls(weights, conf, imgsz):
+    from ultralytics import YOLO
+    model = YOLO(str(ROOT / weights))
+    for split in ("train", "val"):
+        added, frames = 0, 0
+        for js in sorted((DETECTION_DIR / split / "recordings").glob("*.json")):
+            d = json.loads(js.read_text(encoding="utf-8"))
+            have = [box_of(s) for s in d["shapes"] if s["label"] == "ball"]
+            r = model.predict(cv2.imread(str(js.with_suffix(".jpg"))), imgsz=imgsz, conf=conf, verbose=False)[0]
+            new = []
+            for b, k in zip(r.boxes.xyxy.cpu().numpy(), r.boxes.cls.cpu().numpy()):
+                if model.names[int(k)] == "ball" and all(iou(b, h) < 0.3 for h in have + new):
+                    new.append(tuple(float(v) for v in b))
+            if new:
+                d["shapes"] += [rect("ball", b) for b in new]
+                js.write_text(json.dumps(d, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+                added += len(new)
+                frames += 1
+        print(f"{split}: {added} ball boxes added in {frames} frames")
+
+
+def new_frames(a):
     from ultralytics import YOLO
     detector = YOLO(common.OBJECT_MODEL_PATH)
-    recs = yaml.safe_load((ROOT / "dataset" / "recordings.yaml").read_text())["recordings"]
     splits = load_splits()
-    pre_path = OUT / "prelabels.json"
+    pre_path = DETECTION_DIR / "prelabels.json"
     prelabels = json.loads(pre_path.read_text(encoding="utf-8")) if pre_path.exists() else {}
     counts = {}
-    for rec_name, rec in recs.items():
+    for rec_name, rec in recordings().items():
         for cam, info in rec["cameras"].items():
-            cap = cv2.VideoCapture(str(ROOT / info["video"]))
+            cap = cv2.VideoCapture(find_video(info["video"]))
             fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
             n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             fix = common.lens_correction(int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
@@ -67,7 +82,7 @@ def main():
                         if not 0 <= f < n:
                             continue
                         name = frame_name(rec_name, cam, f)
-                        out = OUT / split / "recordings"
+                        out = DETECTION_DIR / split / "recordings"
                         if (out / f"{name}.json").exists():
                             continue
                         cap.set(cv2.CAP_PROP_POS_FRAMES, f)
@@ -88,7 +103,22 @@ def main():
     pre_path.write_text(json.dumps(prelabels, indent=1) + "\n", encoding="utf-8")
     for k, v in sorted(counts.items()):
         print(" ".join(k), v)
-    print(f"wrote {sum(counts.values())} frames -> {OUT}")
+    print(f"wrote {sum(counts.values())} frames -> {DETECTION_DIR}")
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--val-every", type=float, default=4.0)
+    ap.add_argument("--train-every", type=float, default=8.0)
+    ap.add_argument("--train-rooms", nargs="*", default=["room_2"])
+    ap.add_argument("--add-balls", metavar="WEIGHTS", help="add the balls this detector finds to the frames already there")
+    ap.add_argument("--conf", type=float, default=0.2, help="--add-balls: minimum ball confidence")
+    ap.add_argument("--imgsz", type=int, default=1920, help="--add-balls: detector input size")
+    a = ap.parse_args()
+    if a.add_balls:
+        add_balls(a.add_balls, a.conf, a.imgsz)
+    else:
+        new_frames(a)
 
 
 if __name__ == "__main__":

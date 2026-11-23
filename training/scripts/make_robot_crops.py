@@ -6,7 +6,7 @@
    sees it) goes through the robot model; frames outside the splits of dataset/splits.yaml are skipped.
 2. Each robot sighting is put into a bin: room, camera, split, the cell of a --grid over the frame the robot is in (the
    angle the camera sees it from), and its heading in the image in --heading-step degree steps (estimated with the
-   current heading model, robot_crops.HEADING_MODEL; a wrong estimate only costs some variety).
+   current heading model (training/runs/heading); a wrong estimate only costs some variety).
 3. One crop per bin: the clearest sighting (detector and heading model most confident), so every image shows the robot
    at least a little differently from all the others, and a still or repeated view is taken once.
 4. Crop: a square of CROP_SCALE x the robot box around it, native pixels: dataset/robot_heading/<split>/
@@ -17,19 +17,13 @@
 """
 import argparse
 import json
-import sys
-from pathlib import Path
 
 import cv2
 import numpy as np
-import yaml
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "tracking"))
-sys.path.insert(0, str(Path(__file__).parent))
-import common  # noqa: E402
-from dataset_splits import load as load_splits, split_of  # noqa: E402
-from robot_crops import CROP_SCALE, HEADING_DIR, HEADING_MODEL, crop_name, crop_square, heading_deg, parse_name  # noqa: E402
+from dataset import (CROP_SCALE, HEADING_DIR, HEADING_MODEL, crop_name, crop_square, find_video, heading_deg, load_splits,
+                     parse_name, recordings, split_of)
+import common
 
 DET_CONF = 0.4
 
@@ -48,7 +42,7 @@ def main():
     from ultralytics import YOLO
     detector = YOLO(common.OBJECT_MODEL_PATH)
     heading = YOLO(str(HEADING_MODEL))
-    recs = yaml.safe_load((ROOT / "dataset" / "recordings.yaml").read_text())["recordings"]
+    recs = recordings()
     splits = load_splits()
 
     best = {}                       # bin -> (score, recording, camera, frame, box, front, rear)
@@ -58,7 +52,7 @@ def main():
         for cam, info in rec["cameras"].items():
             # the split timeline: a paired camera_2 frame f is camera_1 frame f + offset
             to_timeline = (lambda f, o=rec["offset_frames"]: f + o) if cam != "camera_1" and rec.get("offset_frames") is not None else (lambda f: f)
-            cap = cv2.VideoCapture(str(ROOT / info["video"]))
+            cap = cv2.VideoCapture(find_video(info["video"]))
             n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             fix = common.lens_correction(w, h)
@@ -112,7 +106,7 @@ def main():
     pre_path = HEADING_DIR / "prelabels.json"
     prelabels = json.loads(pre_path.read_text(encoding="utf-8")) if pre_path.exists() else {}
     for key, (_, rec_name, cam, f, box, front, rear) in sorted(best.items(), key=lambda x: (x[1][1], x[1][2], x[1][3])):
-        cap = cv2.VideoCapture(str(ROOT / recs[rec_name]["cameras"][cam]["video"]))
+        cap = cv2.VideoCapture(find_video(recs[rec_name]["cameras"][cam]["video"]))
         cap.set(cv2.CAP_PROP_POS_FRAMES, f)
         ok, img = cap.read()
         img = common.lens_correction(img.shape[1], img.shape[0])(img)

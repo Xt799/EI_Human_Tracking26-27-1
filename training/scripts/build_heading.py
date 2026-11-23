@@ -22,12 +22,8 @@ and trains on the others.
 import argparse
 import json
 import shutil
-import sys
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(Path(__file__).parent))
-from robot_crops import CROP_SCALE, HEADING_DIR, parse_name  # noqa: E402
+from dataset import CROP_SCALE, HEADING_DIR, ROOT, parse_name
 
 KPTS = ("front", "rear")
 

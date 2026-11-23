@@ -9,20 +9,14 @@ over the last seconds, frame by frame, so jitter and jumps show directly.
 and the frame-to-frame change of the heading (how smooth it is) printed at the end.
 """
 import argparse
-import sys
 from collections import deque
 from pathlib import Path
 
 import cv2
 import numpy as np
-import yaml
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "tracking"))
-sys.path.insert(0, str(Path(__file__).parent))
-import common  # noqa: E402
-from dataset_splits import load as load_splits, ranges  # noqa: E402
-from robot_crops import CROP_SCALE, HEADING_MODEL, crop_square, heading_deg  # noqa: E402
+from dataset import CROP_SCALE, HEADING_MODEL, ROOT, crop_square, heading_deg, load_splits, ranges, recordings
+import common
 
 VIEW_W, ZOOM, PLOT_H, PLOT_S = 1200, 400, 220, 10.0       # frame view width, zoom side, plot height, plotted seconds
 
@@ -87,8 +81,8 @@ def main():
     fix = common.lens_correction(int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
     stretches = [(0, n - 1)]
     if a.split:
-        recs = yaml.safe_load((ROOT / "dataset" / "recordings.yaml").read_text())["recordings"]
-        rec, cam = next((r, c) for r, v in recs.items() for c, cv in v["cameras"].items() if Path(cv["video"]) == Path(a.video))
+        recs = recordings()
+        rec, cam = next((r, c) for r, v in recs.items() for c, cv in v["cameras"].items() if Path(cv["video"]).name == Path(a.video).name)
         stretches = ranges(load_splits(), rec, cam)[a.split]
     if a.seconds:
         stretches = [(max(lo, int(a.seconds[0] * fps)), min(hi, int(a.seconds[1] * fps))) for lo, hi in stretches]
