@@ -4,11 +4,7 @@
 """
 Basler camera video recorder.
 
-File path:
-    /home/haichen/ros2_ws/src/basler_record_video.py
-
-Recorded videos will be saved to:
-    /home/haichen/ros2_ws/src/Video_from_basler
+Recorded videos are saved to the repo's videos/ folder, each with <video>_times.csv next to it.
 
 Stop recording:
     - Press SPACE
@@ -38,7 +34,7 @@ CAM_HEIGHT = 1200
 # It should match the real camera FPS for real-time playback.
 RECORD_FPS = 30.0
 
-OUTPUT_DIR = "/home/haichen/ros2_ws/src/Video_from_basler"
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "videos")
 
 # Keep MP4
 FOURCC = "mp4v"
