@@ -1,0 +1,46 @@
+{
+  "version": "4.0.6",
+  "flags": {},
+  "checked": false,
+  "shapes": [
+    {
+      "label": "front",
+      "score": null,
+      "points": [
+        [
+          61.57243816254416,
+          100.8833922261484
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "rear",
+      "score": null,
+      "points": [
+        [
+          75.17667844522967,
+          61.30742049469965
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "difficult": false,
+      "shape_type": "point",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    }
+  ],
+  "imagePath": "room_1_20261012_1800_camera_1_t005620_x808_y471.jpg",
+  "imageData": null,
+  "imageHeight": 150,
+  "imageWidth": 150,
+  "description": ""
+}

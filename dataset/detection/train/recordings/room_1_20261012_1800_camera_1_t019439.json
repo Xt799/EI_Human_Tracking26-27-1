@@ -1,0 +1,41 @@
+{
+  "version": "4.0.6",
+  "flags": {},
+  "checked": false,
+  "imagePath": "room_1_20261012_1800_camera_1_t019439.jpg",
+  "imageData": null,
+  "imageHeight": 1200,
+  "imageWidth": 1900,
+  "description": "",
+  "shapes": [
+    {
+      "label": "robot",
+      "score": null,
+      "points": [
+        [
+          710.4234008789062,
+          721.9439086914062
+        ],
+        [
+          803.6574096679688,
+          721.9439086914062
+        ],
+        [
+          803.6574096679688,
+          798.2778930664062
+        ],
+        [
+          710.4234008789062,
+          798.2778930664062
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    }
+  ]
+}

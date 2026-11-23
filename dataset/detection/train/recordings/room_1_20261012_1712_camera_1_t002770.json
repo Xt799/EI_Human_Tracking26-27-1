@@ -1,0 +1,70 @@
+{
+  "version": "4.0.6",
+  "flags": {},
+  "checked": false,
+  "imagePath": "room_1_20261012_1712_camera_1_t002770.jpg",
+  "imageData": null,
+  "imageHeight": 1200,
+  "imageWidth": 1900,
+  "description": "",
+  "shapes": [
+    {
+      "label": "robot",
+      "score": null,
+      "points": [
+        [
+          1223.6041259765625,
+          592.3506469726562
+        ],
+        [
+          1366.82763671875,
+          592.3506469726562
+        ],
+        [
+          1366.82763671875,
+          731.1774291992188
+        ],
+        [
+          1223.6041259765625,
+          731.1774291992188
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    },
+    {
+      "label": "ball",
+      "score": null,
+      "points": [
+        [
+          491.9990234375,
+          384.9144287109375
+        ],
+        [
+          529.630126953125,
+          384.9144287109375
+        ],
+        [
+          529.630126953125,
+          425.8858337402344
+        ],
+        [
+          491.9990234375,
+          425.8858337402344
+        ]
+      ],
+      "group_id": null,
+      "description": "",
+      "difficult": false,
+      "shape_type": "rectangle",
+      "flags": {},
+      "attributes": {},
+      "kie_linking": []
+    }
+  ]
+}

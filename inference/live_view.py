@@ -2,7 +2,7 @@
 
 uv run python live_view.py [--video VIDEO] [--weights best.pt] [--conf 0.5] [--iou 0.45] [--speed 1.0] [--imgsz 2560]
 
-Defaults: the largest video in ../videos (the test set) and ../training/runs/yolo26n_e100/weights/best.pt.
+Defaults: the largest video in ../videos/room_1/camera_1 (the old test video) and ../training/runs/detector/weights/best.pt.
 Keys:  q/Esc quit | space pause | d or . step one frame (paused) | +/- change conf | [ / ] halve/double speed | s save screenshot
 """
 import argparse
@@ -19,9 +19,9 @@ WINDOW = "human_tracking - live"
 
 
 def largest_video() -> Path:
-    videos = sorted((ROOT / "videos").glob("*.mp4"), key=lambda p: p.stat().st_size)
+    videos = sorted((ROOT / "videos" / "room_1" / "camera_1").glob("*.mp4"), key=lambda p: p.stat().st_size)
     if not videos:
-        raise SystemExit(f"No .mp4 files in {ROOT / 'videos'}")
+        raise SystemExit(f"No .mp4 files in {ROOT / 'videos' / 'room_1' / 'camera_1'}")
     return videos[-1]
 
 
@@ -37,7 +37,7 @@ def draw(frame, result, names):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--video", type=Path, default=None, help="default: the largest video in ../videos")
-    ap.add_argument("--weights", type=Path, default=ROOT / "training" / "runs" / "yolo26n_e100" / "weights" / "best.pt")
+    ap.add_argument("--weights", type=Path, default=ROOT / "training" / "runs" / "detector" / "weights" / "best.pt")
     ap.add_argument("--conf", type=float, default=0.5)
     ap.add_argument("--iou", type=float, default=0.45, help="NMS IoU threshold (lower = fewer duplicate boxes)")
     ap.add_argument("--no-agnostic", action="store_true", help="run NMS per class instead of across classes")

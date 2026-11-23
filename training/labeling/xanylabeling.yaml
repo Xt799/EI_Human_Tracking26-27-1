@@ -1,0 +1,27 @@
+# X-AnyLabeling settings for this project (read with --config by label.ps1; the user's global settings are not touched).
+#
+# The images are crops around the robot. Two points per image give its heading:
+#   key 1: front - the middle of the robot's front, where the gripper is;
+#   key 2: rear  - the middle of the robot's back.
+# Click both at the same height on the robot (e.g. both on the top edge of the chassis), so the line between them is
+# parallel to the floor. Press the key, click, next key. The green arrow (label.ps1) shows the heading as rear -> front.
+# A crop where the robot cannot be told apart: delete both points; a crop with no robot at all (a false detection):
+# delete both points too, it is kept as an example of what is not the robot.
+#
+# Detector frames (dataset/detection/): boxes around the whole robot (key 3) and every ball (key 4).
+
+labels:
+  - front
+  - rear
+  - robot
+  - ball
+sort_labels: false
+validate_label: exact
+auto_use_last_label: false
+store_data: false
+
+digit_shortcuts:
+  1: {mode: point, label: front}
+  2: {mode: point, label: rear}
+  3: {mode: rectangle, label: robot}
+  4: {mode: rectangle, label: ball}

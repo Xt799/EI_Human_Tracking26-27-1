@@ -1,0 +1,50 @@
+# Recordings and how the cameras of one recording line up in time.
+# Videos are not in git: they live under videos/<room>/<camera>/ (see the root README).
+#
+# offset_frames: frame on camera_1 = frame on camera_2 + offset_frames (the same moment).
+#   Found with training/scripts/sync_cameras.py; accuracy about +-3 frames.
+# floor_map: the camera position in tracking/calibration/ (floor_map_<name>.npy), or null if not calibrated.
+# common timeline: frame numbers of camera_1. Paired images are named t<camera_1 frame, 6 digits>.jpg in both
+#   camera folders, so the two views of one moment have the same file name.
+
+recordings:
+  room_1_20261012_1800:
+    room: room_1
+    cameras:
+      camera_1: {video: videos/room_1/camera_1/basler_record_20261012_180049.mp4, floor_map: a4}
+      camera_2: {video: videos/room_1/camera_2/AAA_basler_record_20261012_160049_FIXED.mp4, floor_map: b4}
+    offset_frames: -23
+    paired_frames: [0, 5929]          # camera_1 frames that have a camera_2 partner (camera_2 is 198 s long)
+    notes: >
+      The file names differ by exactly 2 h (the recording PCs' clocks). Offset checked twice: matching people and robot
+      positions on the shared floor map in metres (-23 frames), and sync_cameras.py without the calibration (-22 frames).
+
+  room_2_20261110_1709:
+    room: room_2
+    cameras:
+      camera_1: {video: videos/room_2/camera_1/basler_record_20261110_170937.mp4, floor_map: null}
+      camera_2: {video: videos/room_2/camera_2/basler_record_20261110_160939.mp4, floor_map: null}
+    offset_frames: null               # NOT FOUND YET: no overlap in time could be found (see dataset/README.md)
+    paired_frames: null
+    notes: >
+      camera_2 is 1920x1200 (the others 1900x1200). Same room as the a1/a2/b1/b2 calibrations, but other camera
+      positions, so there is no floor map yet.
+
+# Single-camera recordings (no partner): single-view images, named t<frame>.jpg with the camera's own frame number.
+# floor_map is left null: the camera may have been moved between recordings.
+  room_1_20261012_1658:
+    room: room_1
+    cameras:
+      camera_1: {video: videos/room_1/camera_1/basler_record_20261012_165859.mp4, floor_map: null}
+  room_1_20261012_1712:
+    room: room_1
+    cameras:
+      camera_1: {video: videos/room_1/camera_1/basler_record_20261012_171200.mp4, floor_map: null}
+  room_1_20261012_1719:
+    room: room_1
+    cameras:
+      camera_1: {video: videos/room_1/camera_1/basler_record_20261012_171939.mp4, floor_map: null}
+  room_2_20261110_1635:
+    room: room_2
+    cameras:
+      camera_1: {video: videos/room_2/camera_1/basler_record_20261110_163521.mp4, floor_map: null}

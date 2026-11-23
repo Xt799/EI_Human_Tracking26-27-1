@@ -99,5 +99,5 @@ forward = s · (v_y, −v_x) / |v|
 - `room_map.py` – the top-down drawing of the room, with a heading arrow per person.
 - `sources.py` – the video reader (one video paced, a second following it) and an unused Basler camera class kept from last year.
 - `calibration/` – lens correction files, the floor maps and the frames they were made from.
-- `models/yolo11s-pose.pt` – the pose model. Robot and ball weights are in `../training/runs/yolo26n_e100/weights/best.pt`.
+- `models/yolo11s-pose.pt` – the pose model. Robot and ball weights are in `../training/runs/detector/weights/best.pt`.
 - `tools/basler_record_video.py` – the group's recorder; it made the recordings above. It also writes `<video>_times.csv`, the wall-clock time of every saved frame, for syncing two cameras.

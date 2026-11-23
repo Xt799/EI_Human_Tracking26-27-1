@@ -4,3 +4,6 @@ dataset/**/*.png filter=lfs diff=lfs merge=lfs -text
 
 # one line ending everywhere: Windows checkouts and the Linux lab machine agree
 * text=auto eol=lf
+
+# trained model weights in Git LFS: every retrained version would otherwise stay in the history
+training/runs/**/*.pt filter=lfs diff=lfs merge=lfs -text

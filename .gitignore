@@ -8,23 +8,25 @@ screenshot_*.png
 # large / generated / downloadable
 videos/
 results/
-training/ds_full/
-training/ds_eval/
+training/ds_*/
+/runs/
+.xanylabeling/
 *.pt
-dataset/backgrounds/
-dataset/test/review/
-dataset/train/*/raw/
-dataset/train/*/Pasted*
+dataset/detection/train/coco/
+dataset/detection/train/openimages/
+training/cache/
 
-# experimental runs: only the final YOLO26n model is committed
+# training runs: only the final models are committed (weights, settings, per-epoch scores)
 training/runs/*
-!training/runs/yolo26n_e100/
-training/runs/yolo26n_e100/*
-!training/runs/yolo26n_e100/weights/
-!training/runs/yolo26n_e100/args.yaml
-!training/runs/yolo26n_e100/results.csv
-training/runs/yolo26n_e100/weights/*
-!training/runs/yolo26n_e100/weights/best.pt
+!training/runs/detector/
+!training/runs/heading/
+training/runs/*/*
+!training/runs/*/weights/
+!training/runs/*/args.yaml
+!training/runs/*/results.csv
+training/runs/*/weights/*
+!training/runs/detector/weights/best.pt
+!training/runs/heading/weights/last.pt
 
 # people pose model used by tracking/ (stock Ultralytics file, never changes)
 !tracking/models/yolo11s-pose.pt

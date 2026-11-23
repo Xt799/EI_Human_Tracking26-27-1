@@ -1,43 +1,59 @@
-# Fine-tuning the robot and ball detector (YOLO26n)
+# Training the robot, ball and heading models
 
-We train on full frames (1920 px), labelling only the robot and the ball; people are not labelled. Always run commands from the project root.
-Install the shared environment once: `uv sync` (CUDA 12.8 torch, also works on RTX 50xx).
+Two models, both fine-tuned Ultralytics YOLO26n:
+- **detector** (`runs/detector/weights/best.pt`): boxes around the robot and the ball in a full frame (classes
+  `0 robot`, `1 ball`). Used by `tracking/` and `inference/`, and it gives the heading model its crop.
+- **heading** (`runs/heading/weights/last.pt`): a keypoint model on a crop around the robot (2x the robot box) that
+  finds a `front` and a `rear` point; rear -> front is the way the robot faces.
 
-## Data (`../dataset/`, X-AnyLabeling `.json` + image, classes: robot, ball)
-- `train/` – 16 original images (`frame_17-*`) + `auto_*` images pre-labelled from the videos and corrected by hand. `train/{ball,robot}/cutout|raw` are the cutouts for the synthetic generator.
-- `val/` – validation (last ~18% of the test video, 24 frames)
-- `test/` – test (from the largest video, 87 frames). Never used for training.
-- `backgrounds/` – background images for the synthetic data (downloads coco128 if empty)
+The labelled images are in `../dataset/` (see [../dataset/README.md](../dataset/README.md), also for how to add and
+label new images). Always run commands from the project root. Install the shared environment once: `uv sync`
+(CUDA 12.8 torch, also works on RTX 50xx).
 
-## Pipeline
-1. `uv run python training/scripts/build_full.py` – YOLO dataset in `training/ds_full/` (`--with-test`: exceptional use only; every image appears once per epoch)
-2. `uv run python training/scripts/gen_synthetic.py --n 300 [--preview]` – adds synthetic images (robot/ball cutouts on other backgrounds, partly out of frame or occluded) to the training set
-3. `uv run python training/scripts/train.py --epochs 100 --cache none --workers 4 --name <name>` (YOLO26 needs at least ~100 epochs; `--optimizer`, `--lr0`, `--close-mosaic` are configurable) – output: `training/runs/<name>/weights/best.pt`
-4. `uv run python training/scripts/evaluate.py training/runs/<name>/weights/best.pt [--set test|val] [--imgsz 2560] [--conf 0.5]` – mAP, TP/FP/FN, duplicates
-5. `uv run python inference/live_view.py [--weights ...] [--imgsz 2560] [--speed 1]` – live view (largest video by default)
+## Detector
+```
+uv run python training/scripts/download_balls.py      # once: public ball images (COCO, Open Images), git-ignored
+uv run python training/scripts/build_detection.py     # -> training/ds_detect/
+uv run python training/scripts/train.py --model <start.pt> --data training/ds_detect/data.yaml --imgsz 1920 --batch 6 --epochs 10 --cache none --name <name>
+uv run python training/scripts/compare_detectors.py training/runs/<name>/weights/best.pt --imgsz 1920
+```
+- Training set: our frames (`dataset/detection/train/recordings/`) and the false-detection crops of
+  `dataset/robot_heading/` (no object in them), each listed 5 times (`--own-repeat`), plus 1000 images per public
+  source (`--public`), half of them those with the smallest balls. The public images have no robot in them, so they
+  also teach the detector that people, clothes and furniture are not the robot.
+- `compare_detectors.py`: precision / recall / mAP per class on the val set, and on how many of the false-detection
+  crops a robot is found.
+- `add_ball_prelabels.py WEIGHTS --imgsz 1920`: adds the balls a model finds to our frames as pre-labels, for review.
+- The committed detector was fine-tuned in steps (the first single-camera model -> + more frames and the public ball
+  images -> a few rounds on room_2 frames with a ball -> the command above, 10 epochs from the previous weights).
+  Settings in `runs/detector/args.yaml`.
+- Inference size: 1920 px or more; the ball is often only ~20 px. A detector alone flickers on such small balls
+  (found in one frame, missed in the next); a tracker that keeps a ball for a few frames smooths this out.
 
-New training images from the videos: `uv run python training/scripts/make_trainset.py [--n 400]` – picks diverse frames from the NON-test videos,
-pre-labels them with `yolo26n_e100` at three input sizes, and writes them as `dataset/train/auto_*` + `review/` + `frames_to_check.txt` for review.
-Correct them in X-AnyLabeling; the script does not overwrite corrected labels (unless `--force` is given).
+Val set, 1920 px, conf 0.001 for mAP: robot precision 0.99, recall 1.00, mAP50 0.99; ball precision 0.96, recall 0.97,
+mAP50 0.98; robot found on 0 of 20 false-detection crops.
 
-## Results (`runs/yolo26n_e100`, YOLO26n, 100 epochs, MuSGD; test set, conf 0.4)
-| input | robot P / R | ball P / R | false positives (robot / ball) | frames with >1 detection |
-|---|---|---|---|---|
-| 1920 | 0.97 / 0.99 | 1.00 / 0.74 | 2 / 0 | 0 |
-| **2560** | **0.97 / 0.99** | **0.97 / 1.00** | 2 / 2 | 0 |
-| 3200 | 0.96 / 0.96 | 0.93 / 1.00 | 3 / 6 | 3 |
-2560 px is the best trade-off (it also finds the distant ~20 px ball). mAP50-95 is 0.78 on test and 0.83 on val.
-
-## YOLO26 settings
-YOLO26 needs longer training: at 30 epochs (5370 iterations) `auto` picks AdamW and box accuracy is weaker (test mAP50-95 0.66).
-At 100 epochs (>10000 iterations) `auto` picks YOLO26's own MuSGD optimizer, with mosaic off for the last 10 epochs (`--close-mosaic 10`) – this was the best:
-| training | val mAP50-95 (2560) |
-|---|---|
-| 30 epochs, AdamW (auto) | 0.72 |
-| 100 epochs, AdamW lr0=0.002 | 0.56 (0.81 at 1920) |
-| **100 epochs, MuSGD (auto)** | **0.83** |
-Compared with YOLO11n (30 epochs): at 1920, robot 0.97 / 0.96, ball 1.00 / 0.71. The training setups differ, so this is not a clean comparison.
-The final model was selected on the val set; the test set was measured only once.
+## Heading
+```
+uv run python training/scripts/build_heading.py               # train = train/, val = val/  -> training/ds_heading/
+uv run python training/scripts/train.py --model yolo26n-pose.pt --data training/ds_heading/data.yaml --imgsz 320 --batch 16 --epochs 120 --degrees 180 --mosaic 0 --name <name>
+uv run python training/scripts/evaluate_heading.py training/runs/<name>/weights/best.pt training/ds_heading/val.txt
+uv run python training/scripts/build_heading.py --all         # final model: train on train/ + val/ -> training/ds_heading_all/
+```
+- Only reviewed crops are used (points moved from the pre-label); crops with no points are negatives.
+- `evaluate_heading.py`: angle error in the image per room, share within 10 / 20 degrees, flipped (more than 90
+  degrees off), and false robots on the negatives. Other splits: `--train-room room_2` (train on one room, measure on
+  the other) and `--folds 5` (cross-validation in time chunks).
+- The committed model was trained on all crops (`--all`, 120 epochs), so it has no held-out score: use `last.pt`.
+  The same setup trained on `train/` only scored on `val/`: median error room_1 5.9 deg, room_2 4.5 deg, 0% flipped.
+- Videos to check it: `render_heading_video.py VIDEO [--split val] [--seconds a b]` (one camera) and
+  `render_heading_paired.py room_1_20261012_1800` (both cameras and a top-down floor view); written to `../results/`.
 
 ## Notes
-- `--cache ram` runs out of memory with dataloader workers at large image sizes, hence `--cache none --workers 4`.
+- `train.py` defaults: 1920 px, 100 epochs, `--optimizer auto` (AdamW below ~10000 iterations, YOLO26's MuSGD above).
+  For a short fine-tune of a trained model, `--optimizer AdamW --lr0 0.0005` keeps more of what it knew.
+- Very small training sets: the learning-rate warm-up takes about 100 iterations, so with a few images it never ends;
+  list the images repeatedly.
+- `--cache ram` runs out of memory with dataloader workers at large image sizes, hence `--cache none`.
+- On Windows, Ultralytics' dataloader workers re-import the main script: run scripts from a file (not from stdin) and
+  keep the work under `if __name__ == "__main__":`.
