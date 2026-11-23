@@ -1,4 +1,4 @@
-"""Which split (train / val / test) an image of dataset/ belongs to, from dataset/splits.yaml."""
+"""Which split (train / val) an image of dataset/ belongs to, from dataset/splits.yaml."""
 from pathlib import Path
 
 import yaml

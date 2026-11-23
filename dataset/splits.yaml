@@ -1,24 +1,21 @@
-# Which part of each recording is used for training, validation and test, as frame ranges [first, last].
+# Which part of each recording is used for training and which for validation, as frame ranges [first, last].
 # Splits are contiguous stretches of time, not random frames: neighbouring frames are nearly identical, so a random
-# split would put the same scene in train and test. A split is one range or a list of ranges.
+# split would put the same scene in both. A split is one range or a list of ranges.
 #
 # Paired recording: camera_1 frames on the common timeline (see recordings.yaml); both cameras of a moment are in the
 # same split. Cameras that are not paired: ranges per camera, in that camera's own frame numbers.
 
 room_1_20261012_1800:
   train: [[0, 3899], [6900, 20066]]   # 0-130 s paired; from 230 s on camera_1 only (camera_2 stopped at 198 s)
-  val:   [3900, 4499]                 # 130-150 s
-  test:  [4500, 5929]                 # 150-198 s; 198-230 s left out as a gap to the camera_1-only training part
+  val:   [3900, 5929]                 # 130-198 s; 198-230 s left out as a gap to the camera_1-only training part
 
 room_2_20261110_1709:                 # the two cameras are not in sync: own frame numbers
   camera_1:
     train: [0, 15399]                 # 0-513 s
-    val:   [15400, 17599]             # 513-587 s
-    test:  [17600, 21975]             # 587-733 s
+    val:   [15400, 21975]             # 513-733 s
   camera_2:
     train: [0, 11899]                 # 0-397 s
-    val:   [11900, 13599]             # 397-453 s
-    test:  [13600, 16995]             # 453-567 s
+    val:   [11900, 16995]             # 397-567 s
 
 # single-camera recordings: training only
 room_1_20261012_1658: {train: [0, 790]}
