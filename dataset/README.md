@@ -70,7 +70,7 @@ hours, so compare minutes and seconds. Write the result into `recordings.yaml`.
 ## Recordings
 | recording | cameras | offset | floor map |
 |---|---|---|---|
-| `room_1_20261012_1800` | 1, 2 | camera_1 = camera_2 − 23 frames (camera_2 is 198 s long) | `low` / `opposite` |
+| `room_1_20261012_1800` | 1, 2 | camera_1 = camera_2 − 23 frames (camera_2 is 198 s long) | `a4` / `b4` |
 | `room_2_20261110_1709` | 1, 2 | not found: no overlap in time | none |
 | `room_1_20261012_1658`, `_1712`, `_1719` | 1 | – | none (camera_1 was moved after `_1712`) |
 | `room_2_20261110_1635` | 1 | – | none |

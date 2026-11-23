@@ -118,8 +118,11 @@ def main():
         f"basler_record_{timestamp}{OUTPUT_EXT}"
     )
 
+    times_path = output_path.replace(OUTPUT_EXT, "_times.csv")   # wall-clock time of every saved frame, to sync two cameras
+
     camera = None
     writer = None
+    times = None
 
     try:
         # -------- Open first detected Basler camera --------
@@ -161,6 +164,9 @@ def main():
                 "VideoWriter failed to open. MP4 writer is not available."
             )
 
+        times = open(times_path, "w")
+        times.write("frame,time\n")
+
         # -------- Start camera grabbing --------
         camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
 
@@ -195,6 +201,7 @@ def main():
 
                 # Save original full-resolution frame
                 writer.write(frame)
+                times.write(f"{frame_count},{time.time():.4f}\n")
 
                 frame_count += 1
                 recent_frame_count += 1
@@ -269,6 +276,8 @@ def main():
         # -------- Release video writer --------
         if writer is not None:
             writer.release()
+        if times is not None:
+            times.close()
 
         # -------- Close camera --------
         if camera is not None:

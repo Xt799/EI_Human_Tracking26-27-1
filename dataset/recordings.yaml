@@ -11,8 +11,8 @@ recordings:
   room_1_20261012_1800:
     room: room_1
     cameras:
-      camera_1: {video: videos/room_1/camera_1/basler_record_20261012_180049.mp4, floor_map: low}
-      camera_2: {video: videos/room_1/camera_2/AAA_basler_record_20261012_160049_FIXED.mp4, floor_map: opposite}
+      camera_1: {video: videos/room_1/camera_1/basler_record_20261012_180049.mp4, floor_map: a4}
+      camera_2: {video: videos/room_1/camera_2/AAA_basler_record_20261012_160049_FIXED.mp4, floor_map: b4}
     offset_frames: -23
     paired_frames: [0, 5929]          # camera_1 frames that have a camera_2 partner (camera_2 is 198 s long)
     notes: >
