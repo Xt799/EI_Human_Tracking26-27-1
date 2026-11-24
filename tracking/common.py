@@ -27,13 +27,30 @@ LEFT_HIP, RIGHT_HIP, LEFT_ANKLE, RIGHT_ANKLE = 11, 12, 15, 16
 ORIGIN_COLOUR, X_AXIS_COLOUR, Y_AXIS_COLOUR = (0, 0, 255), (255, 128, 0), (0, 255, 255)
 
 
-def lens_correction(width, height):
-    """Returns a function frame -> lens-corrected frame, for frames of the given size."""
+def lens_matrices(width, height):
+    """(camera matrix, distortion coefficients, camera matrix of the lens-corrected frame) for frames of the given size."""
     K = np.load(os.path.join(CALIB_DIR, "camera_matrix.npy"))
     D = np.load(os.path.join(CALIB_DIR, "distortion_coefficients.npy"))
     new_K, _ = cv2.getOptimalNewCameraMatrix(K, D, (width, height), 0, (width, height))
+    return K, D, new_K
+
+
+def lens_correction(width, height):
+    """Returns a function frame -> lens-corrected frame, for frames of the given size."""
+    K, D, new_K = lens_matrices(width, height)
     map1, map2 = cv2.initUndistortRectifyMap(K, D, None, new_K, (width, height), cv2.CV_16SC2)
     return lambda frame: cv2.remap(frame, map1, map2, interpolation=cv2.INTER_LINEAR)
+
+
+def camera_pose(H, width, height):
+    """Where the camera hangs, from its floor map: ((x, y) on the floor below it, height above the floor), in metres."""
+    M = np.linalg.inv(lens_matrices(width, height)[2]) @ np.linalg.inv(H)   # floor point (x, y, 1) -> camera coordinates, up to scale
+    M /= (np.linalg.norm(M[:, 0]) + np.linalg.norm(M[:, 1])) / 2              # the two floor axes are unit vectors
+    if M[2, 2] < 0:                                                           # the floor lies in front of the camera
+        M = -M
+    R = np.column_stack([M[:, 0], M[:, 1], np.cross(M[:, 0], M[:, 1])])
+    centre = -R.T @ M[:, 2]
+    return centre[:2], abs(float(centre[2]))
 
 
 def camera_positions():

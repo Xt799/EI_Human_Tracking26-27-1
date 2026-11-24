@@ -4,7 +4,6 @@ from collections import deque
 import numpy as np
 
 from common import TRACK_TIMEOUT_S
-from one_euro import OneEuro
 from orientation import HEADING_HOLD_S, combine
 
 ATTACH_M = 0.6       # a new track joins a person this close that has no track from its camera detected in this frame
@@ -17,9 +16,9 @@ TRAIL_N = 45         # positions kept for drawing the trail
 
 # Owner rule, on the running face similarity (same person about 0.6, others about 0.0 on our recordings)
 OWNER_SIM = 0.45               # at or above this: owner candidate
-STRANGER_SIM = 0.25            # below this a face score says stranger; a score in between says nothing and is ignored
+STRANGER_SIM = 0.25            # below this a face score says stranger; a score in between does not block a join
 OWNER_SWITCH_MARGIN = 0.10     # another person must beat the current owner by this much to take over
-FRESH_S = 5.0                  # a face score confirmed this recently may block a join or win the owner label; an older one only keeps a label
+FRESH_S = 5.0                  # a face score this recent may block a join or win the owner label; an older one only keeps a label
 
 
 def compatible(sim_a, sim_b):
@@ -48,9 +47,8 @@ class FusedPerson:
     def __init__(self, pid):
         self.id = pid
         self.members = {}            # camera name -> track id
-        self.floor_m = None          # the position, after the One Euro filter
+        self.floor_m = None          # the position
         self.raw_m = None            # the same position from the unsmoothed measurements, None when not placed in this frame
-        self.smoother = OneEuro()
         self.label = "unknown"
         self.sim = None
         self.placed = -1e9           # when the person was last placed on the floor
@@ -97,17 +95,16 @@ class Fusion:
                          if tid in self.cameras[cam] and compatible(self.fresh(self.cameras[cam][tid]), p.sim)}
 
     def split_people(self):
-        """A person whose two tracks stay more than SPLIT_M apart for SPLIT_S is two people: one track leaves, and what was learned from both is reset."""
+        """A person whose two tracks stay more than SPLIT_M apart for SPLIT_S is two people: the second track leaves, and the camera
+        offsets learned from the wrong pair are forgotten."""
         for p in self.people.values():
             if not self.apart(p):
                 p.apart_since = None
             elif p.apart_since is None:
                 p.apart_since = self.t
             elif self.t - p.apart_since > SPLIT_S:
-                del p.members[self.leaving(p)]
-                sims = [self.cameras[cam][tid].sim for cam, tid in p.members.items() if self.cameras[cam][tid].sim is not None]
-                p.sim = max(sims) if sims else None
-                p.offset, p.smoother, p.apart_since = {}, OneEuro(), None
+                p.members.popitem()
+                p.apart_since, p.offset = None, {}
 
     def attach_free_tracks(self):
         """A track that belongs to nobody joins the nearest person with a known position who has no track from its camera detected in this frame."""
@@ -191,7 +188,7 @@ class Fusion:
 
     # ---- Helpers of the steps ----
     def fresh(self, track):
-        """The track's face score if a clear look confirmed it within FRESH_S, else None: after an id swap an old score may be someone else's."""
+        """The track's face score if a face was scored within FRESH_S, else None: after an id swap an old score may be someone else's."""
         return track.sim if self.t - track.looked <= FRESH_S else None
 
     def fresh_sim(self, p):
@@ -221,11 +218,6 @@ class Fusion:
                 return True
         return False
 
-    def leaving(self, p):
-        """The camera whose track leaves a person being split: the one without a face score if only the other has one, else the one that joined last."""
-        scored = [cam for cam, tid in p.members.items() if self.cameras[cam][tid].sim is not None]
-        return next(cam for cam in p.members if cam not in scored) if len(scored) == 1 else list(p.members)[-1]
-
     def apart(self, p):
         """True if both cameras place the person in this frame, more than SPLIT_M apart."""
         tracks = [self.cameras[cam][tid] for cam, tid in p.members.items()]
@@ -235,11 +227,12 @@ class Fusion:
         """Position of a person from their tracks placed in this frame ({camera: track})."""
         if not p.located(self.t):            # the position was lost: the trail starts again
             p.trail.clear()
-        # each camera alone is off by a roughly constant offset (the ankle joint is above the floor), so the offset is
-        # learned while both cameras see the person and subtracted when only one does
+        # a camera's error grows with distance, so the closer camera counts more (weight 1 / distance²); each camera alone is
+        # off by a roughly constant offset, learned while both cameras see the person and subtracted when only one does
         if len(placed) > 1:
-            fused = np.mean([tr.floor_m for tr in placed.values()], axis=0)
-            p.raw_m = np.mean([tr.raw_m for tr in placed.values()], axis=0)
+            w = np.array([1 / tr.range_m ** 2 for tr in placed.values()])
+            fused = w @ np.array([tr.floor_m for tr in placed.values()]) / w.sum()
+            p.raw_m = w @ np.array([tr.raw_m for tr in placed.values()]) / w.sum()
             for cam, tr in placed.items():
                 offset = tr.floor_m - fused
                 p.offset[cam] = offset if cam not in p.offset else OFFSET_ALPHA * offset + (1 - OFFSET_ALPHA) * p.offset[cam]
@@ -247,7 +240,7 @@ class Fusion:
             cam, tr = next(iter(placed.items()))
             fused = tr.floor_m - p.offset.get(cam, 0.0)
             p.raw_m = tr.raw_m - p.offset.get(cam, 0.0)
-        p.floor_m = p.smoother(fused, self.t)
+        p.floor_m = fused
         p.trail.append(p.floor_m)
         p.placed, p.placed_by = self.t, sorted(placed)
 

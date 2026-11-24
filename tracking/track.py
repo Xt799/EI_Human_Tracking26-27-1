@@ -17,7 +17,7 @@ import numpy as np
 from ultralytics import YOLO
 
 from common import (KPT_CONF, LEFT_ANKLE, OBJECT_MODEL_PATH, RESULTS_DIR, RIGHT_ANKLE, SMOOTH_HALF_S, TRACK_TIMEOUT_S, PeopleDetector,
-                    camera_positions, lens_correction, load_floor_map, load_room, put_label, towards_camera)
+                    camera_pose, camera_positions, lens_correction, load_floor_map, load_room, put_label, towards_camera)
 from faces import FaceEncoder, face_visible, load_owner
 from fusion import OWNER_SIM, STRANGER_SIM, Fusion, compatible, fuse_objects
 from orientation import HEADING_HOLD_S, blend, body_heading, degrees, floor_frame
@@ -30,7 +30,8 @@ OBJECTS = ("robot", "ball")    # classes of the object detector that we track
 OBJECT_CONF = 0.5              # minimum confidence for a robot / ball box
 OBJECT_IMGSZ = 1920            # detector input size; 2560 finds the far-away ball better but is slower
 ROBOT_RADIUS_M = 0.20          # the bottom of the robot's box is its edge nearest the camera; its centre is this much further away
-WALL_SLACK_M = 0.2             # a position this far beyond a wall still counts; further out is a detection on the wall
+WALL_SLACK_M = 0.1            # a position this far beyond a wall still counts; further out is a detection on the wall
+ANKLE_H_M = 0.10               # height of the ankle joint above the floor (best fit on the pair 5 markers)
 DISPLAY_SCALE = 0.4
 FACE_EVERY_S = 0.5             # how often a person whose face is turned to a camera is compared with the owner (thresholds in fusion.py)
 ARROW_M = 0.4                  # length of the heading arrow drawn on the floor in the camera views
@@ -43,9 +44,13 @@ LEFT_COLOUR, RIGHT_COLOUR, BONE_COLOUR, DOT_COLOUR = (0, 0, 255), (0, 255, 0), (
 
 
 # ---- Floor positions ----
-def to_metres(H, point_px, room):
-    """Pixel point on the floor -> (x, y) metres, or None if it lands beyond the walls of the room (a detection on a wall)."""
+def to_metres(H, point_px, room, above_m=0.0, camera=None):
+    """Pixel point -> (x, y) metres on the floor, or None if it lands beyond the walls of the room (a detection on a wall).
+    A point above_m above the floor maps too far from the camera; it is pulled back towards the camera ((x, y) below it, height)."""
     m = cv2.perspectiveTransform(np.asarray(point_px, np.float32).reshape(1, 1, 2), H)[0, 0]
+    if above_m:
+        below, height = camera
+        m = below + (m - below) * (height - above_m) / height
     (x0, x1), (y0, y1) = room
     s = WALL_SLACK_M
     return m if x0 - s <= m[0] <= x1 + s and y0 - s <= m[1] <= y1 + s else None
@@ -96,9 +101,9 @@ class Person(Track):
     def __init__(self):
         super().__init__()
         self.last_seen = -1e9        # time of the last detection, placed or not
+        self.range_m = None          # distance on the floor from its camera at the last placement
         self.sim = None
-        self.last_look = None        # the previous clear face score
-        self.looked = -1e9           # when a clear face score last set or confirmed the similarity
+        self.looked = -1e9           # time of the last face score
         self.last_check = -1e9
         self.heading = None          # smoothed unit vector on the floor the body faces (orientation.py)
         self.heading_w = 0.0         # weight of the last heading measurement
@@ -113,15 +118,9 @@ class Person(Track):
             self.heading = None
 
     def compare(self, score, t):
-        """Folds one face score into the running similarity. An unsure score (side view, blur) changes nothing. The similarity is set,
-        or restarted because the track now follows someone else, only by two clear scores in a row that agree: one odd look changes nothing."""
-        if STRANGER_SIM <= score < OWNER_SIM:
-            return
-        if self.sim is not None and compatible(score, self.sim):
-            self.sim, self.looked = (score + self.sim) / 2, t
-        elif self.last_look is not None and compatible(score, self.last_look):
-            self.sim, self.looked = (score + self.last_look) / 2, t
-        self.last_look = score
+        """Folds one face score into the running similarity. A score that contradicts it restarts it: the track now follows someone else."""
+        self.sim = (score + self.sim) / 2 if self.sim is not None and compatible(score, self.sim) else score
+        self.looked = t
 
 
 class Camera:
@@ -131,6 +130,7 @@ class Camera:
         self.name = name
         self.source = VideoSource(video)
         self.H = load_floor_map(name)
+        self.pose = camera_pose(self.H, self.source.width, self.source.height)   # ((x, y) on the floor below the camera, height)
         self.floor_frame = floor_frame(self.H, (self.source.width / 2, self.source.height - 1))   # (handedness, w sign) of the floor map (orientation.py)
         self.room = room             # room bounds in metres, shared by both cameras
         self.detector = PeopleDetector()
@@ -156,9 +156,10 @@ def update_people(camera, encoder, t):
         person = camera.people.setdefault(tid, Person())
         person.last_seen = t
         pt = person_floor_point(kxy[i], kconf[i])
-        m = to_metres(camera.H, pt, camera.room) if pt is not None else None
+        m = to_metres(camera.H, pt, camera.room, ANKLE_H_M, camera.pose) if pt is not None else None
         if m is not None:                # feet hidden or beyond the walls: this camera does not place the person; the other one may
             person.update_position(m, t)
+            person.range_m = float(np.linalg.norm(m - camera.pose[0]))
         person.update_heading(body_heading(kxy[i], kconf[i], boxes[i], camera.H, camera.floor_frame, pt), t)
         if encoder is not None and t - person.last_check >= FACE_EVERY_S and face_visible(kxy[i], kconf[i]):
             person.last_check = t        # counts as a try even if no face is found in the crop
