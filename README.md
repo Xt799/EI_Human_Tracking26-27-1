@@ -8,8 +8,13 @@
 - `videos/` – raw recordings, not in the repository.
 - `cap_detection/` – cap detection scripts (Basler camera, YOLO pose, ROS 2 position publisher).
 
-## Running
+## Live cameras
+
+Follow the [Windows live camera manual](tracking/WINDOWS_LIVE_CAMERAS.md) to install the drivers, download the trained weights, calibrate one or more Baslers and track people, the robot and the ball.
+
+## Recorded playback
 ```
+git lfs pull --include="training/runs/**/weights/*.pt"
 uv sync                                                    # once, shared .venv (CUDA 12.8 torch)
 uv run python tracking/track.py --video <camera_1.mp4> --position a4 --video <camera_2.mp4> --position b4 --offset 23
 uv run python tracking/track.py --video <video.mp4>        # one camera, image only

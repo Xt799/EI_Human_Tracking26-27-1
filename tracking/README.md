@@ -2,7 +2,11 @@
 
 Two fixed cameras in opposite corners of the lab record the room at the same time. For every frame we detect the people with a pose model and the robot and the ball with the YOLO26n model from `training/` (and which way the robot faces with the heading model), convert each detection's position on the floor from pixels into metres, and merge the two views into one set of people and objects. The output is a trajectory for every person and object in room coordinates, with each person labelled as the owner or a stranger.
 
-## Running
+## Live cameras
+
+Use one or more serial-selected Basler cameras to track people, robot heading and the ball in metres. For Windows installation, model downloads, camera discovery, calibration, testing and troubleshooting, see the [Windows live camera manual](WINDOWS_LIVE_CAMERAS.md).
+
+## Recorded playback
 
 ```
 uv run python tracking/calibrate.py a1 b1 --video videos/a1.mp4 videos/b1.mp4 --rect 4.0 3.0
@@ -21,7 +25,7 @@ The recordings are not in git: copy them into `videos/` at the repo root. They c
 
 1. `calibrate.py` makes the floor maps of a pair, once per camera position: [calibration/README.md](calibration/README.md).
 2. `enrol_owner.py` records the owner's face from a short clip in which their face is visible (any single video; use a different stretch than the one you track). It shows the faces it found per id and asks which id is the owner.
-3. `track.py` takes one or two videos with their camera positions. The two videos of a pair must start on the same frame or be given the `--offset` between them (the `a` recordings were re-timed to 30 fps to match their `b` partners; the untouched originals are in `videos/original/`). Windows open for each camera view and a top-down room map. Positions go to `results/<start time>_positions.csv` at the repo root, one row per frame per tracked thing; every run writes a new file. Every frame is processed, so playback is slower than real time; `REALTIME` at the top of the file switches to dropping frames instead.
+3. `track.py` takes one or two videos with their camera positions. Two recordings must start on the same frame or be given the `--offset` between them (the `a` recordings were re-timed to 30 fps to match their `b` partners; the untouched originals are in `videos/original/`). Windows open for each camera view and a top-down room map. Positions go to `results/<start time>_positions.csv` at the repo root, one row per frame per tracked thing; every run writes a new file. `REALTIME=True` drops frames to follow the video clock. Set it to `False` to process every frame.
 
 The environment is the shared one from the repo root (`uv sync`). The face models (about 280 MB) download into `~/.insightface` on first use.
 
@@ -107,16 +111,16 @@ forward = s · (v_y, −v_x) / |v|
 
 ## Files
 
-- `track.py` – the tracking loop for one or two videos: people per camera, merging, owner label, robot with its heading and ball, drawing, CSV.
+- `track.py` – the tracking loop for live Baslers or one or two videos: people per camera, merging, owner label, robot with its heading and ball, drawing, CSV.
 - `enrol_owner.py` – records who the owner is; writes `owner/` (face vectors and two check images, not in git).
-- `calibrate.py` – builds the floor maps of a camera pair from clicked floor points (a measured rectangle, or tile corners), on a frame picked from each video.
+- `calibrate.py` – builds the floor maps of a camera pair from clicked floor points (a measured rectangle, or tile corners), on live or recorded frames.
 - `common.py` – shared: paths, lens correction, people detection, floor maps and room bounds, keypoint names, constants.
 - `faces.py` – face visibility from the pose keypoints, face vectors, similarity, the owner file.
 - `fusion.py` – merges the cameras' tracks into people and decides the owner; combines the cameras' headings, also the robot's.
 - `robot_heading.py` – which way the robot faces: the crop around its box, the heading model, the direction on the floor.
 - `orientation.py` – which way each person's body faces, from the shoulders and hips (see Body orientation).
 - `room_map.py` – the top-down drawing of the room, with a heading arrow per person and for the robot.
-- `sources.py` – the video reader (one video paced, a second following it) and an unused Basler camera class kept from last year.
+- `sources.py` – the video reader (one video paced, a second following it) and serial-selected Basler capture workers and live frame synchronization.
 - `calibration/` – lens correction files, the floor maps and the frames they were made from.
 - `models/yolo11s-pose.pt` – the pose model. Robot and ball weights are in `../training/runs/detector/weights/best.pt`, the robot heading model in `../training/runs/heading/weights/last.pt`.
 - `tools/basler_record_video.py` – the group's recorder; it made the recordings above. It also writes `<video>_times.csv`, the wall-clock time of every saved frame, for syncing two cameras.

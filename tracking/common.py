@@ -27,10 +27,21 @@ LEFT_HIP, RIGHT_HIP, LEFT_ANKLE, RIGHT_ANKLE = 11, 12, 15, 16
 ORIGIN_COLOUR, X_AXIS_COLOUR, Y_AXIS_COLOUR = (0, 0, 255), (255, 128, 0), (0, 255, 255)
 
 
-def lens_correction(width, height):
+def require_trained_weight(path):
+    """Detect a missing or unhydrated Git LFS weight before passing it to YOLO."""
+    message = f"Fetch the trained model with git lfs pull --include='training/runs/**/weights/*.pt' ({path})."
+    if not os.path.isfile(path):
+        raise FileNotFoundError(message)
+    with open(path, "rb") as stream:
+        if stream.read(42).startswith(b"version https://git-lfs.github.com/spec/"):
+            raise ValueError(message)
+    return path
+
+
+def lens_correction(width, height, intrinsics_dir=CALIB_DIR):
     """Returns a function frame -> lens-corrected frame, for frames of the given size."""
-    K = np.load(os.path.join(CALIB_DIR, "camera_matrix.npy"))
-    D = np.load(os.path.join(CALIB_DIR, "distortion_coefficients.npy"))
+    K = np.load(os.path.join(intrinsics_dir, "camera_matrix.npy"))
+    D = np.load(os.path.join(intrinsics_dir, "distortion_coefficients.npy"))
     new_K, _ = cv2.getOptimalNewCameraMatrix(K, D, (width, height), 0, (width, height))
     map1, map2 = cv2.initUndistortRectifyMap(K, D, None, new_K, (width, height), cv2.CV_16SC2)
     return lambda frame: cv2.remap(frame, map1, map2, interpolation=cv2.INTER_LINEAR)

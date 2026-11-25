@@ -1,35 +1,34 @@
 """
-Track people (owner / stranger), the robot with its heading and the ball from one or two cameras, and show where they
-are in the room.
+Track people (owner / stranger), the robot with its heading, and the ball from live cameras or one or two recordings.
 
-    uv run python tracking/track.py --video VIDEO_1 --position a4 --video VIDEO_2 --position b4 [--offset 23]
-    uv run python tracking/track.py --video VIDEO [--position a4]
+    uv run python tracking/track.py --basler SERIAL VIEW
+    uv run python tracking/track.py videos/a1.mp4 a1 videos/b1.mp4 b1
 
---position: the calibrated camera position the video was recorded from (its floor map in calibration/), right after
-its --video. It turns pixels into metres; without it the camera is shown in the image only (people, the robot with
-its heading arrow, the ball; no metres, no room map, no owner label). Two cameras are merged only if both have one.
---offset N: the two videos start together, after skipping the first N frames of the second video (a negative N skips
-the first video's frames instead), so that they show the same moment.
+Use --video FILE [--position VIEW] per recording and --offset N to align a pair.
 REALTIME below chooses between dropping frames to keep the video's pace and processing every frame.
 Keys: q or Esc quit, p pause, c continue. Positions are also written to results/<start time>_positions.csv.
 """
 import argparse
 import csv
 import os
+import signal
 import time
+from collections import deque
+from contextlib import ExitStack
+from threading import Event
 
 import cv2
 import numpy as np
-from ultralytics import YOLO
 
 from common import (KPT_CONF, LEFT_ANKLE, OBJECT_MODEL_PATH, RESULTS_DIR, RIGHT_ANKLE, SMOOTH_ALPHA, TRACK_TIMEOUT_S, PeopleDetector,
-                    camera_positions, lens_correction, load_floor_map, load_room, put_label, towards_camera)
+                    camera_positions, lens_correction, load_floor_map, load_room, put_label, require_trained_weight, towards_camera)
 from faces import FaceEncoder, face_visible, load_owner
 from fusion import Fusion, compatible, fuse_objects
 from orientation import HEADING_HOLD_S, blend, body_heading, degrees, floor_frame
 from robot_heading import RobotHeading, floor_heading
 from room_map import RoomMap
-from sources import VideoSource
+from live_calibration import load_live_profiles, validate_pairs
+from sources import BaslerSource, LiveFrames, VideoSource, list_baslers, pylon_devices
 
 # ---- Settings ----
 REALTIME = True                # True: drop frames to keep the video's pace, as a live camera would; False: every frame, slower than real time
@@ -46,7 +45,10 @@ ARROW_M = 0.4                  # length of the heading arrow drawn on the floor 
 LEFT_KPTS = {1, 3, 5, 7, 9, 11, 13, 15}
 SKELETON = [(5, 7), (7, 9), (6, 8), (8, 10), (11, 13), (13, 15), (12, 14), (14, 16), (5, 6), (11, 12), (5, 11), (6, 12)]
 LABEL_COLOUR = {"unknown": (200, 200, 200), "owner": (255, 0, 0), "stranger": (0, 255, 255), "robot": (0, 200, 255), "ball": (0, 255, 0)}
-LEFT_COLOUR, RIGHT_COLOUR, BONE_COLOUR, DOT_COLOUR, OUTLINE_COLOUR = (0, 0, 255), (0, 255, 0), (220, 220, 220), (255, 255, 255), (40, 40, 40)
+LEFT_COLOUR, RIGHT_COLOUR, BONE_COLOUR, DOT_COLOUR = (0, 0, 255), (0, 255, 0), (220, 220, 220), (255, 255, 255)
+
+
+OUTLINE_COLOUR = (40, 40, 40)
 
 
 # ---- Floor positions ----
@@ -117,27 +119,19 @@ class Person(Track):
 
 
 class Camera:
-    """One camera: its video, floor map (None: no metres), detector, the people it tracks and the last frame."""
+    """One camera: its video, floor map, detector, the people it tracks and the last frame."""
 
-    def __init__(self, video, name, floor_map, room, shift=0):
+    def __init__(self, name, room, size, H, intrinsics_dir=None):
         self.name = name
-        self.source = VideoSource(video)
-        self.H = load_floor_map(floor_map) if floor_map else None
-        self.floor_frame = None if self.H is None else floor_frame(self.H, (self.source.width / 2, self.source.height - 1))   # (handedness, w sign) of the floor map (orientation.py)
-        self.room = room             # room bounds in metres, shared by both cameras
-        self.shift = shift           # this video's frame = the first video's frame + shift
+        self.width, self.height = size
+        self.H = H
+        self.floor_frame = floor_frame(H, (self.width / 2, self.height - 1)) if H is not None else None
+        self.room = room
         self.detector = PeopleDetector()
-        self.correct = lens_correction(self.source.width, self.source.height)
+        self.correct = (lens_correction(*size) if intrinsics_dir is None
+                        else lens_correction(*size, intrinsics_dir=intrinsics_dir))
         self.people = {}
         self.frame = None
-
-    def read(self, index):
-        """Reads the frame with this index. False at the end of the video."""
-        raw = self.source.read_at(index)
-        if raw is None:
-            return False
-        self.frame = self.correct(raw)
-        return True
 
 
 # ---- Per-frame steps ----
@@ -154,14 +148,12 @@ def update_people(camera, encoder, t):
             person.update_position(m, t)
         if camera.H is not None:
             person.update_heading(body_heading(kxy[i], kconf[i], boxes[i], camera.H, camera.floor_frame, pt), t)
-        if encoder is not None and t - person.last_check >= FACE_EVERY_S and face_visible(kxy[i], kconf[i]):
+        if camera.H is not None and encoder is not None and t - person.last_check >= FACE_EVERY_S and face_visible(kxy[i], kconf[i]):
             person.last_check = t        # counts as a try even if no face is found in the crop
             score = encoder.score(camera.frame, kxy[i])
             if score is not None:
                 person.compare(score)
         seen.append((tid, boxes[i], kxy[i], kconf[i], pt if m is not None else None))
-    for tid in [k for k, p in camera.people.items() if t - p.last_seen > TRACK_TIMEOUT_S]:
-        del camera.people[tid]
     return seen
 
 
@@ -201,8 +193,17 @@ def detect_objects(camera, model, heading_model):
 def open_log():
     """Starts a new CSV in results/, named by the start time. Returns the file and its writer."""
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    path = os.path.join(RESULTS_DIR, time.strftime("%Y%m%d_%H%M%S") + "_positions.csv")
-    log = open(path, "w", newline="")
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    for index in range(1000):
+        suffix = f"_{index}" if index else ""
+        path = os.path.join(RESULTS_DIR, f"{stamp}{suffix}_positions.csv")
+        try:
+            log = open(path, "x", newline="")
+            break
+        except FileExistsError:
+            continue
+    else:
+        raise RuntimeError("Too many position logs with the same start time.")
     writer = csv.writer(log)
     writer.writerow(["frame", "t", "kind", "id", "label", "x", "y", "cameras", "sim", "heading_deg"])
     print(f"Positions are logged to {path}")
@@ -219,7 +220,7 @@ def log_positions(writer, frame_index, t, people, objects, found):
     for name, obj in objects.items():
         if obj.placed == t:
             writer.writerow([frame_index, f"{t:.3f}", name, name, name, f"{obj.floor_m[0]:.3f}", f"{obj.floor_m[1]:.3f}",
-                             "+".join(sorted(cam for cam in found if name in found[cam])), "",
+                             "+".join(sorted(cam for cam in found if name in found[cam] and found[cam][name][3] is not None)), "",
                              "" if obj.heading is None else f"{degrees(obj.heading):.1f}"])
 
 
@@ -276,22 +277,192 @@ def camera_view(cam, seen, links, found, objects, t, fps):
 
 
 def place_windows(cameras, with_room):
-    """Opens the windows: the camera views on the left, one above the other, the room map to their right."""
-    w, h = int(cameras[0].source.width * DISPLAY_SCALE), int(cameras[0].source.height * DISPLAY_SCALE)
-    windows = [(cam.name, 0, i * (h + 40)) for i, cam in enumerate(cameras)] + ([("Room", w + 10, 0)] if with_room else [])
-    for name, x, y in windows:
+    """Tile the camera windows in two rows and place the room map beside them."""
+    width = max(cam.width for cam in cameras.values()) * DISPLAY_SCALE
+    height = max(cam.height for cam in cameras.values()) * DISPLAY_SCALE
+    for index, name in enumerate(cameras):
         cv2.namedWindow(name)
-        cv2.moveWindow(name, x, y)
+        cv2.moveWindow(name, int(index // 2 * (width + 10)), int(index % 2 * (height + 40)))
+    if with_room:
+        cv2.namedWindow("Room")
+        cv2.moveWindow("Room", int((len(cameras) + 1) // 2 * (width + 10)), 0)
 
 
 def room_marks(people, objects, t):
     """What the room map shows, as RoomMap.draw takes it: the people, and the robot and ball while their position is fresh."""
-    marks = [(p.floor_m, LABEL_COLOUR[p.label], f"P{p.id} {p.label}", p.trail, p.heading) for p in people if p.floor_m is not None]
+    marks = [(p.floor_m, LABEL_COLOUR[p.label], f"P{p.id} {p.label}", p.trail, p.heading) for p in people if p.floor_m is not None and t - p.placed <= TRACK_TIMEOUT_S]
     marks += [(obj.floor_m, LABEL_COLOUR[name], name, [], obj.heading) for name, obj in objects.items() if obj.fresh(t)]
     return marks
 
 
-# ---- Command line ----
+# ---- Main loop ----
+def object_detector():
+    from ultralytics import YOLO
+
+    return YOLO(require_trained_weight(OBJECT_MODEL_PATH))
+
+
+def process_frames(cameras, frames, fusion, objects, model, heading_model, encoder, t):
+    seen, found = {}, {}
+    for name, cam in cameras.items():
+        for tid in [tid for tid, person in cam.people.items() if t - person.last_seen > TRACK_TIMEOUT_S]:
+            del cam.people[tid]
+        if name in frames:
+            cam.frame = cam.correct(frames[name])
+            seen[name] = update_people(cam, encoder, t)
+            found[name] = detect_objects(cam, model, heading_model)
+    links = fusion.update({name: cam.people for name, cam in cameras.items()}, t)
+    fuse_objects(objects, found, t)
+    return seen, links, found
+
+
+def run_tracking(stack, cameras, sources, room_m, grid_m, headless, window_s=None, shutdown=None):
+    live = window_s is not None
+    fusion, objects = Fusion(), {name: Track() for name in OBJECTS}
+    model = object_detector()
+    heading_model = RobotHeading()
+    signature, owner_video = load_owner()
+    encoder = FaceEncoder(signature) if signature is not None and room_m is not None else None
+    print(f"Owner enrolled from: {owner_video}" if encoder else "Owner labels inactive.")
+    log, writer = open_log()
+    stack.enter_context(log)
+    if not headless:
+        stack.callback(cv2.destroyAllWindows)
+        room = RoomMap(room_m, grid_m) if room_m is not None else None
+        place_windows(cameras, room is not None)
+
+    if live:
+        capture = LiveFrames(sources, window_s)
+        for source in sources.values():
+            source.start()
+        latency_ms = deque(maxlen=10_000)
+        skew_ms = deque(maxlen=10_000)
+    else:
+        primary = next(iter(sources.values()))
+    paused, after = False, float("-inf")
+    count = 0
+    started = capture.started_at if live else time.monotonic()
+    shown_at = {}
+    try:
+        while shutdown is None or not shutdown.is_set():
+            key = (-1 if headless else cv2.waitKey(20 if paused else 1) & 0xFF)
+            if key in (27, ord("q")):
+                break
+            if key == ord("p") or paused and key == ord("c"):
+                paused = not paused
+                if not paused:
+                    if live:
+                        after = time.monotonic()
+                    else:
+                        primary.resync()
+            if paused:
+                if live:
+                    capture.check_liveness(time.monotonic())
+                continue
+            if live:
+                batch = capture.next(after)
+                if not batch:
+                    if not headless:
+                        now = time.monotonic() - capture.started_at
+                        show_waiting_views(cameras, shown_at, now)
+                        cv2.imshow("Room", room.draw(room_marks(fusion.people.values(), objects, now)))
+                    time.sleep(0.01)
+                    continue
+                frame_index = count
+                newest = capture.last_update
+                t = newest - capture.started_at
+                frames = {name: frame.image for name, frame in batch.items()}
+            else:
+                frame_index = primary.due_index() if REALTIME else primary.index() + 1
+                frames = {name: source.read_at(frame_index + source.shift) for name, source in sources.items()}
+                if any(frame is None for frame in frames.values()):
+                    break
+                t = primary.time()
+
+            seen, links, found = process_frames(cameras, frames, fusion, objects, model, heading_model, encoder, t)
+            log_positions(writer, frame_index, t, fusion.people.values(), objects, found)
+            count += 1
+            if live:
+                log.flush()
+                oldest = min(frame.received_at for frame in batch.values())
+                latency_ms.append((time.monotonic() - oldest) * 1000)
+                if len(batch) > 1:
+                    skew_ms.append((newest - oldest) * 1000)
+            if not headless:
+                fps = count / max(time.monotonic() - started, 0.001)
+                for name in frames:
+                    view = camera_view(cameras[name], seen[name], links, found[name], objects, t, fps)
+                    cv2.imshow(name, view)
+                    shown_at[name] = t
+                if live:
+                    show_waiting_views(cameras, shown_at, t)
+                if room is not None:
+                    cv2.imshow("Room", room.draw(room_marks(fusion.people.values(), objects, t)))
+    finally:
+        if live:
+            for source in sources.values():
+                source.stop.set()
+            print_live_stats(sources, capture.discarded, count, time.monotonic() - started, latency_ms, skew_ms)
+
+
+def show_waiting_views(cameras, shown_at, t):
+    for name, cam in cameras.items():
+        stamp = shown_at.get(name, float("-inf"))
+        if stamp is not None and t - stamp > TRACK_TIMEOUT_S:
+            canvas = np.zeros((int(cam.height * DISPLAY_SCALE), int(cam.width * DISPLAY_SCALE), 3), np.uint8)
+            put_label(canvas, f"{name} | waiting for a fresh frame", (14, 36))
+            cv2.imshow(name, canvas)
+            shown_at[name] = None
+
+
+def print_live_stats(sources, discarded, count, elapsed, latency_ms, skew_ms):
+    print(f"Live: {count} updates in {elapsed:.1f} s ({count / max(elapsed, 0.001):.2f} updates/s incl. pauses)")
+    for name, source in sources.items():
+        with source.lock:
+            print(f"{name} ({source.serial}): {source.received} received, {source.skipped} skipped by pylon, "
+                  f"{source.overwritten} overwritten, {discarded[name]} discarded by timing"
+                  + (f", capture stopped: {source.error}" if source.error else ""))
+    for label, samples in (("Receipt-to-CSV latency", latency_ms), ("Multi-view arrival skew", skew_ms)):
+        if samples:
+            median, p95 = np.percentile(samples, (50, 95))
+            print(f"{label}: median {median:.1f} ms, p95 {p95:.1f} ms (last {len(samples)} updates with samples)")
+
+
+def main(inputs, *, headless=False, shutdown=None):
+    """Recorded inputs are (path, window name, optional floor map, frame shift)."""
+    maps = [view for _, _, view, _ in inputs if view is not None]
+    room_m, grid_m = load_room(maps) if maps else (None, None)
+    with ExitStack() as stack:
+        cameras, sources = {}, {}
+        for video, name, view, shift in inputs:
+            source = VideoSource(video, shift)
+            stack.callback(source.close)
+            sources[name] = source
+            H = load_floor_map(view) if view is not None else None
+            cameras[name] = Camera(name, room_m, (source.width, source.height), H)
+        start = max(0, -min(source.shift for source in sources.values()))
+        if start:
+            next(iter(sources.values())).read_at(start - 1)
+        run_tracking(stack, cameras, sources, room_m, grid_m, headless, shutdown=shutdown)
+
+
+def run_live(pairs, headless, window_s, shutdown=None):
+    devices = pylon_devices()
+    with ExitStack() as stack:
+        sources = {}
+        for serial, name in pairs:
+            source = BaslerSource(serial, devices)
+            stack.callback(source.close)
+            sources[name] = source
+        room_m, grid_m, profiles = load_live_profiles(sources)
+        cameras = {}
+        for name, source in sources.items():
+            H, directory = profiles[name]
+            size = source.geometry["Width"], source.geometry["Height"]
+            cameras[name] = Camera(name, room_m, size, H, directory)
+        run_tracking(stack, cameras, sources, room_m, grid_m, headless, window_s, shutdown)
+
+
 class VideoArg(argparse.Action):
     """--video: a new [path, position] pair; the position is filled in by a --position after it."""
     def __call__(self, parser, namespace, value, option_string=None):
@@ -308,83 +479,69 @@ class PositionArg(argparse.Action):
         videos[-1][1] = value
 
 
-# ---- Main loop ----
-def main(inputs):
-    """inputs: [(video, window name, floor map or None, shift)], one or two cameras."""
-    maps = [m for _, _, m, _ in inputs if m]
-    room_m, grid_m = load_room(maps) if maps else (None, None)
-    cameras = [Camera(v, name, m, room_m, shift) for v, name, m, shift in inputs]
-    start = max(0, -min(cam.shift for cam in cameras))
-    if start:                        # a later video starts earlier on the timeline: skip the first video's frames before it
-        cameras[0].source.read_at(start - 1)
-    object_model = YOLO(OBJECT_MODEL_PATH)
-    heading_model = RobotHeading()
-    signature, owner_video = load_owner()
-    encoder = FaceEncoder(signature) if signature is not None else None
-    print(f"Owner enrolled from: {owner_video}" if encoder else "No owner enrolled: everyone is 'unknown'.")
-    for v, name, m, shift in inputs:
-        print(f"Input: {v} ({'floor map ' + m if m else 'no floor map: image only'}{f', {shift:+d} frames' if shift else ''})")
-
-    room = RoomMap(room_m, grid_m) if room_m is not None else None
-    fusion, objects = Fusion(), {name: Track() for name in OBJECTS}
-    log, writer = open_log()
-    place_windows(cameras, room is not None)
-
-    fps, n_frames, fps_t0, paused = 0.0, 0, time.time(), False
+def cli(argv=None, *, shutdown=None):
+    ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
+    ap.add_argument("recordings", nargs="*", metavar="INPUT", help="recorded input as VIDEO_A VIEW_A VIDEO_B VIEW_B")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--video", action=VideoArg, metavar="FILE", help="one or two recordings, each optionally followed by --position")
+    ap.add_argument("--position", action=PositionArg, choices=camera_positions(), help="floor map for the preceding --video")
+    ap.add_argument("--offset", type=int, help="skip N frames of the second recording (negative skips frames of the first)")
+    mode.add_argument("--basler", nargs=2, action="append", metavar=("SERIAL", "VIEW"), help="select a live camera, repeat for each view")
+    mode.add_argument("--list-cameras", action="store_true", help="list Basler serials, models and transports")
+    ap.add_argument("--sync-ms", type=float, default=100, help="live frame freshness and arrival skew limit in milliseconds (default 100)")
+    ap.add_argument("--headless", action="store_true", help="write positions without opening windows")
+    a = ap.parse_args(argv)
     try:
-        while True:
-            if paused:
-                key = cv2.waitKey(50) & 0xFF
-                if key in (ord("c"), ord("p")):
-                    paused = False
-                    cameras[0].source.resync()
-                elif key in (27, ord("q")):
-                    break
-                continue
-            frame_index = cameras[0].source.due_index() if REALTIME else cameras[0].source.index() + 1
-            if not all(cam.read(frame_index + cam.shift) for cam in cameras):
-                break
-            t = cameras[0].source.time()
-
-            seen = {cam.name: update_people(cam, encoder, t) for cam in cameras}
-            links = fusion.update({cam.name: cam.people for cam in cameras}, t)
-            found = {cam.name: detect_objects(cam, object_model, heading_model) for cam in cameras}
-            fuse_objects(objects, found, t)
-            log_positions(writer, frame_index, t, fusion.people.values(), objects, found)
-
-            n_frames += 1
-            if time.time() - fps_t0 >= 1.0:
-                fps, n_frames, fps_t0 = n_frames / (time.time() - fps_t0), 0, time.time()
-            for cam in cameras:
-                cv2.imshow(cam.name, camera_view(cam, seen[cam.name], links, found[cam.name], objects, t, fps))
-            if room is not None:
-                cv2.imshow("Room", room.draw(room_marks(fusion.people.values(), objects, t)))
-
-            key = cv2.waitKey(1) & 0xFF
-            if key in (27, ord("q")):
-                break
-            paused = key == ord("p")
+        if a.recordings and (a.basler or a.list_cameras or a.video):
+            ap.error("choose recorded input or a live camera command")
+        if a.offset is not None and not (a.video and len(a.video) == 2):
+            ap.error("--offset requires two --video inputs")
+        if a.list_cameras:
+            devices = list_baslers()
+            for serial, model, transport in devices:
+                print(f"{serial}\t{model}\t{transport}")
+            if not devices:
+                print("No Basler cameras found.")
+        elif a.basler:
+            validate_pairs(a.basler)
+            if not np.isfinite(a.sync_ms) or a.sync_ms <= 0:
+                ap.error("--sync-ms must be a positive finite number")
+            run_live(a.basler, a.headless, a.sync_ms / 1000, shutdown)
+        else:
+            videos = a.video
+            if not videos:
+                if len(a.recordings) != 4:
+                    ap.error("provide --video FILE, VIDEO_A VIEW_A VIDEO_B VIEW_B, or --basler SERIAL VIEW")
+                videos = [a.recordings[:2], a.recordings[2:]]
+                if any(view not in camera_positions() for _, view in videos):
+                    ap.error(f"choose recorded views from {', '.join(camera_positions())}")
+            if len(videos) > 2:
+                ap.error("at most two --video inputs")
+            inputs = []
+            for index, (path, view) in enumerate(videos):
+                if not os.path.isfile(path):
+                    ap.error(f"video not found: {path}")
+                name = view or f"video {index + 1}"
+                if any(previous[1] == name for previous in inputs):
+                    ap.error("choose distinct camera positions")
+                inputs.append((path, name, view, (a.offset or 0) if index else 0))
+            main(inputs, headless=a.headless, shutdown=shutdown)
+    except (OSError, RuntimeError, ValueError) as exc:
+        ap.exit(1, f"{exc}\n")
     except KeyboardInterrupt:
-        pass
+        ap.exit(130)
+
+
+def entrypoint():
+    shutdown = Event()
+    previous = signal.signal(signal.SIGINT, lambda *_: shutdown.set())
+    try:
+        cli(shutdown=shutdown)
     finally:
-        log.close()
-        for cam in cameras:
-            cam.source.close()
-        cv2.destroyAllWindows()
+        signal.signal(signal.SIGINT, previous)
+    if shutdown.is_set():
+        raise SystemExit(130)
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--video", action=VideoArg, required=True, help="a video file; give it twice for two cameras")
-    ap.add_argument("--position", action=PositionArg, choices=camera_positions(),
-                    help="camera position the video before it was recorded from (its floor map)")
-    ap.add_argument("--offset", type=int, default=0,
-                    help="frames to skip at the start of the second video (negative: of the first) so both show the same moment")
-    a = ap.parse_args()
-    if len(a.video) > 2:
-        ap.error("at most two --video")
-    for v, _ in a.video:
-        if not os.path.exists(v):
-            ap.error(f"video not found: {v}")
-    shifts = [0, a.offset] if len(a.video) == 2 else [0]
-    main([(v, pos or f"video {i + 1}", pos, shift) for i, ((v, pos), shift) in enumerate(zip(a.video, shifts))])
+    entrypoint()
