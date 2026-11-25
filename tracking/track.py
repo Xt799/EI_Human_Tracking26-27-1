@@ -32,7 +32,7 @@ OBJECT_IMGSZ = 1920            # detector input size; 2560 finds the far-away ba
 ROBOT_RADIUS_M = 0.20          # the bottom of the robot's box is its edge nearest the camera; its centre is this much further away
 WALL_SLACK_M = 0.1            # a position this far beyond a wall still counts; further out is a detection on the wall
 ANKLE_H_M = 0.10               # height of the ankle joint above the floor (best fit on the pair 5 markers)
-DISPLAY_SCALE = 0.4
+DISPLAY_SCALE = 0.35           # camera views on screen, as a share of the frame size; 0.35 fits all three side by side on a 1080p screen at 100 %
 FACE_EVERY_S = 0.5             # how often a person whose face is turned to a camera is compared with the owner (thresholds in fusion.py)
 ARROW_M = 0.4                  # length of the heading arrow drawn on the floor in the camera views
 
@@ -281,10 +281,10 @@ def camera_view(cam, seen, links, found, t, fps):
     return cv2.resize(canvas, (0, 0), fx=DISPLAY_SCALE, fy=DISPLAY_SCALE)
 
 
-def place_windows(cameras):
-    """Opens the three windows: the two camera views on the left, one above the other, the room map to their right."""
-    w, h = int(cameras[0].source.width * DISPLAY_SCALE), int(cameras[0].source.height * DISPLAY_SCALE)
-    for name, x, y in ((cameras[0].name, 0, 0), (cameras[1].name, 0, h + 40), ("Room", w + 10, 0)):
+def place_windows(cameras, room_width):
+    """Opens the three windows side by side: the first camera's view, the room map, the second camera's view."""
+    w = int(cameras[0].source.width * DISPLAY_SCALE)
+    for name, x, y in ((cameras[0].name, 0, 0), ("Room", w + 20, 0), (cameras[1].name, w + room_width + 40, 0)):
         cv2.namedWindow(name)
         cv2.moveWindow(name, x, y)
 
@@ -309,7 +309,7 @@ def main(video_a, camera_a, video_b, camera_b):
     room = RoomMap(room_m, grid_m)
     fusion, objects = Fusion(), {name: Track() for name in OBJECTS}
     log, writer = open_log()
-    place_windows(cameras)
+    place_windows(cameras, room.background.shape[1])
 
     fps, n_frames, fps_t0, paused = 0.0, 0, time.time(), False
     try:

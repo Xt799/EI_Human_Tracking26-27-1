@@ -62,7 +62,7 @@ class FusedPerson:
         self.outside_at = -1e9       # last time a camera saw their feet outside the area
         self.both_placed = False     # both cameras have placed them at least once: a real person, not a one-camera ghost
         self.offset = {}             # camera -> its point minus the two-camera average, learned while both cameras see the person
-        self.apart_since = None
+        self.apart_since = None      # start of the split count: when the two tracks were first placed more than SPLIT_M apart
         self.trail = deque(maxlen=TRAIL_N)
         self.heading = None          # unit vector on the floor the body faces: the cameras' headings, weighted (orientation.py)
         self.heading_at = -1e9
@@ -114,10 +114,15 @@ class Fusion:
                          if tid in self.cameras[cam] and compatible(self.fresh(self.cameras[cam][tid]), p.sim)}
 
     def split_people(self):
-        """A person whose two tracks stay more than SPLIT_M apart for SPLIT_S is two people: the second track leaves, and the camera
-        offsets and the owner look learned from the wrong pair are forgotten."""
+        """A person whose two tracks are placed more than SPLIT_M apart for over SPLIT_S is two people. Frames in which a camera does not
+        place them do not stop the count (for up to TRACK_TIMEOUT_S from its start); a frame placing them together does. The second track
+        leaves, the offsets and the owner look learned from the wrong pair are forgotten, and the dot moves to the track that stays."""
         for p in self.people.values():
-            if not self.apart(p):
+            gap = self.gap(p)
+            if gap is None:                  # not both placed in this frame: the count waits, unless nothing is left to split or it is too old
+                if len(p.members) < 2 or (p.apart_since is not None and self.t - p.apart_since > TRACK_TIMEOUT_S):
+                    p.apart_since = None
+            elif gap <= SPLIT_M:
                 p.apart_since = None
             elif p.apart_since is None:
                 p.apart_since = self.t
@@ -125,6 +130,8 @@ class Fusion:
                 p.members.popitem()
                 p.apart_since, p.offset = None, {}
                 p.owner_look = max((self.cameras[cam][tid].owner_look for cam, tid in p.members.items()), default=-1e9)
+                cam, tid = next(iter(p.members.items()))      # the dot moves to the track that stays, so the other one cannot rejoin at once
+                p.floor_m = self.cameras[cam][tid].floor_m
 
     def attach_free_tracks(self):
         """A track that belongs to nobody joins the nearest person with a known position who has no track from its camera detected in this frame."""
@@ -238,10 +245,12 @@ class Fusion:
                 return True
         return False
 
-    def apart(self, p):
-        """True if both cameras place the person in this frame, more than SPLIT_M apart."""
+    def gap(self, p):
+        """Distance between the person's two tracks if both cameras place them in this frame, else None."""
         tracks = [self.cameras[cam][tid] for cam, tid in p.members.items()]
-        return len(tracks) == 2 and all(tr.placed == self.t for tr in tracks) and distance(tracks[0].floor_m, tracks[1].floor_m) > SPLIT_M
+        if len(tracks) == 2 and all(tr.placed == self.t for tr in tracks):
+            return distance(tracks[0].floor_m, tracks[1].floor_m)
+        return None
 
     def place(self, p, placed):
         """Position of a person from their tracks placed in this frame ({camera: track})."""
