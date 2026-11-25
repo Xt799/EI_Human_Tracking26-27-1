@@ -36,3 +36,26 @@ Models:
 - `training/runs/detector/weights/best.pt` – the robot and ball detector.
 - `training/runs/heading/weights/last.pt` – the robot heading model (front and rear point on a crop around the robot).
 - `tracking/models/yolo11s-pose.pt` – people with their keypoints (stock Ultralytics model).
+
+## Owner and our recordings
+
+Without an enrolled owner everyone is labelled unknown. Enrol the owner once, from a clip in which their face is visible; the owner of all our recordings is enrolled from `videos/enrol_20261123_144905.mp4`:
+```
+uv run python tracking/enrol_owner.py videos/enrol_20261123_144905.mp4
+```
+
+Our two-camera recordings are not in git; copy them into `videos/`. Except for pair 4, the two videos of a pair start on the same frame, so no `--offset` is needed:
+
+| Pair | `--video` and `--position` | Room |
+| --- | --- | --- |
+| 1 | `videos/a1.mp4` `a1`, `videos/b1.mp4` `b1` | 3 × 3 m rectangle |
+| 2 | `videos/a2.mp4` `a2`, `videos/b2.mp4` `b2` | 3 × 3 m rectangle |
+| 3 | `videos/a3.mp4` `a3`, `videos/b3.mp4` `b3` | 3 × 3 m rectangle |
+| 4 | `videos/room_1/camera_1/basler_record_20261012_180049.mp4` `a4`, `videos/room_1/camera_2/AAA_basler_record_20261012_160049_FIXED.mp4` `b4`, `--offset 23` | room 1, 5.3 × 6.1 m |
+| 5 | `videos/a5.mp4` `a5`, `videos/b5.mp4` `b5` | 3 × 4 m taped rectangle with measured marks. The best calibrated pair |
+
+```
+uv run python tracking/track.py --video videos/a5.mp4 --position a5 --video videos/b5.mp4 --position b5
+```
+
+Every run writes `results/<start time>_positions.csv`: one row per person and object per frame, with the position in metres, the owner / stranger label and the heading. The columns, how the tracking works and its limitations: [tracking/README.md](tracking/README.md).

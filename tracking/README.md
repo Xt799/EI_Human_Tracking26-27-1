@@ -1,6 +1,8 @@
 # Tracking: people, owner and stranger, robot and its heading, ball
 
-Two fixed cameras in opposite corners of the lab record the room at the same time. For every frame we detect the people with a pose model and the robot and the ball with the YOLO26n model from `training/` (and which way the robot faces with the heading model), convert each detection's position on the floor from pixels into metres, and merge the two views into one set of people and objects. The output is a trajectory for every person and object in room coordinates, with each person labelled as the owner or a stranger.
+Two fixed cameras in opposite corners of the lab record the room at the same time. For every frame we detect the people with a pose model (it finds each person and their joints) and the robot and the ball with the YOLO26n model from `training/` (and which way the robot faces with the heading model), convert each detection's position on the floor from pixels into metres, and merge the two views into one set of people and objects. The output is a trajectory for every person and object in room coordinates, with each person labelled as the owner (one person, recognised by the face we enrolled) or a stranger.
+
+On screen this is a room map seen from above, with a dot per person, robot and ball, next to the two camera views.
 
 ## Live cameras
 
@@ -9,10 +11,10 @@ Use one or more serial-selected Basler cameras to track people, robot heading an
 ## Recorded playback
 
 ```
-uv run python tracking/calibrate.py a1 b1 --video videos/a1.mp4 videos/b1.mp4 --rect 4.0 3.0
+uv run python tracking/calibrate.py a6 b6 --video videos/a6.mp4 videos/b6.mp4 --rect 3.0 4.0
 uv run python tracking/enrol_owner.py videos/<clip with the owner's face>.mp4
-uv run python tracking/track.py --video videos/a1.mp4 --position a1 --video videos/b1.mp4 --position b1 [--offset <frames>]
-uv run python tracking/track.py --video videos/a1.mp4 [--position a1]
+uv run python tracking/track.py --video videos/a5.mp4 --position a5 --video videos/b5.mp4 --position b5 [--offset <frames>]
+uv run python tracking/track.py --video videos/a5.mp4 [--position a5]
 ```
 - `--video`: a video file, once or twice (two cameras).
 - `--position`: right after its `--video`, the camera position it was recorded from: the name of its floor map in
@@ -21,21 +23,45 @@ uv run python tracking/track.py --video videos/a1.mp4 [--position a1]
 - `--offset N`: the two videos start together after skipping the first N frames of the second one (negative N: of the
   first one), for recordings that did not start at the same moment.
 
-The recordings are not in git: copy them into `videos/` at the repo root. They come in pairs, `a<n>` and `b<n>`, filmed at the same time by the two cameras; each pair has its own camera positions.
+The recordings are not in git: copy them into `videos/` at the repo root. They come in pairs, `a<n>` and `b<n>`, filmed at the same time by the two cameras. Each pair was filmed from its own camera positions, and every camera position has its own floor map (pixels → metres) in `calibration/`, named like the video. Which videos and floor maps belong together: the table in the [main README](../README.md). `calibrate.py` overwrites the maps of the names it is given, so calibrate a new camera position under a new name (`a6 b6` above).
 
 1. `calibrate.py` makes the floor maps of a pair, once per camera position: [calibration/README.md](calibration/README.md).
 2. `enrol_owner.py` records the owner's face from a short clip in which their face is visible (any single video; use a different stretch than the one you track). It shows the faces it found per id and asks which id is the owner.
-3. `track.py` takes one or two videos with their camera positions. Two recordings must start on the same frame or be given the `--offset` between them (the `a` recordings were re-timed to 30 fps to match their `b` partners; the untouched originals are in `videos/original/`). The windows open side by side: one camera view, the top-down room map, the other camera view. Positions go to `results/<start time>_positions.csv` at the repo root, one row per person in every frame their position is known and per object in every frame it is seen; every run writes a new file. `x`, `y` are smoothed, `raw_x`, `raw_y` the unsmoothed measurement; `cameras` lists the cameras that placed the person in that frame; otherwise it says `held` (a camera detects them, not their feet) or `hidden` (no camera detects them), and the position is the last known one. A new person gets rows after half a second. `REALTIME` at the top of the file is on: frames are dropped to keep the video's pace, as with a live camera. Switched off, every frame is processed and playback is slower than real time.
+3. `track.py` runs the tracking on one or two videos, each with its camera position.
+   - Two recordings must start on the same frame, or be given the `--offset` between them. The `a` videos of pairs 1–3 and 5 were re-timed so that every frame matches the same frame of their `b` partner.
+   - The windows open side by side: one camera view, the room map, the other camera view.
+   - `REALTIME` at the top of the file is on: frames are dropped to keep the video's pace, as a live camera would. Switched off, every frame is processed and playback is slower than real time.
+   - Every run writes a new `results/<start time>_positions.csv` at the repo root: one row per person and per frame while their position is known, and one per object and frame while it is seen.
 
-The environment is the shared one from the repo root (`uv sync`). The face models (about 280 MB) download into `~/.insightface` on first use.
+   | Column | Meaning |
+   | --- | --- |
+   | `frame`, `t` | frame number and time in the video, in seconds |
+   | `kind`, `id` | `person`, `robot` or `ball`; people are `P1`, `P2`, ... |
+   | `label` | `owner`, `stranger` or `unknown` (nobody is the owner yet and this person's face was never seen) |
+   | `x`, `y` | position on the floor in metres, smoothed over time |
+   | `raw_x`, `raw_y` | the same position without smoothing; empty when no camera saw the feet in this frame |
+   | `cameras` | the cameras that saw the feet in this frame, e.g. `a5+b5`. `held`: a camera sees the person but not their feet, so the last position is repeated. `hidden`: no camera sees the person at all, the last position is repeated for up to 5 s |
+   | `sim` | how much the person's face looks like the owner's: about 0.6 for the owner, about 0.0 for others |
+   | `heading_deg` | the direction the body (or the robot) faces: 0° along +x, 90° along +y |
+
+The environment is the shared one from the repo root (`uv sync`); in a terminal where it is already active, `python` works in place of `uv run python`. The face models (InsightFace `buffalo_l`, about 280 MB) download into `~/.insightface` on first use. With `REALTIME` on, about 5 frames a second are processed, and the first few seconds of a run pass while the models load.
 
 ## How it works
 
-**Metres.** A floor map per camera position, a 3×3 matrix fitted once from clicked floor points, turns any pixel on the floor into metres from a fixed origin. In any room the points are the corners of a measured rectangle on the floor; in the tiled lab they are tile corners. The two cameras of a pair are calibrated together, so they share the origin and the room bounds; the maps are in `calibration/`. A map is only valid for points on the floor, so a person is placed at the feet; a camera that does not see their feet does not place them. When no camera sees the feet, the person keeps the last position while a camera still detects them, unless a camera sees their feet outside the area for half a second. Someone both cameras have placed keeps it for up to 5 s after no camera detects them any more; anyone else is forgotten after a second. A new room or camera position needs new maps: [calibration/README.md](calibration/README.md).
+Each camera finds people and their joints on its own. A floor map per camera position turns a pixel on the floor into metres ([calibration/README.md](calibration/README.md)), so a person is placed at their feet, and when both cameras see the feet, the closer camera counts more.
 
-**Merging.** Each camera tracks people on its own with ids that last while they stay in view. In room coordinates, a track within 0.6 m of a person known from the other camera is the same person; otherwise it is a new person. The position is a weighted average of the cameras that see the feet: a camera's error grows with distance, so the closer camera counts more (weight 1 / distance²). The ankle joint is about 10 cm above the floor, so each camera's ankle point would land too far from it; it is pulled back towards the camera, whose place and height come from its floor map. A camera that only sees someone's upper body, because they stand right in front of it, does not place them. The robot's box ends at its edge nearest the camera, so each camera's point is pushed back by the robot's radius before averaging. When one camera loses someone the other keeps them, and a track that comes back under a new id rejoins by position. Two people that turn out to stand on the same spot are merged unless a camera detects them as two bodies in that frame, the closest pair first, and the owner keeps their id (otherwise the older one does); two tracks joined by mistake that stay more than 1 m apart for half a second are split again.
+`fusion.py` turns the two cameras' tracks (a track is one person as seen by one camera) into people on the map. Every frame it runs these steps in order:
 
-**Owner.** Nobody is identified by a fixed feature; the owner is enrolled per session, by face. Whenever a person's face is turned to one of the cameras, the face is encoded and compared with the enrolled face vectors every half second; with two opposite cameras one of them usually sees it. Whoever most recently showed the owner's face (a score above the owner threshold) is the owner, and keeps the label, face hidden or not, until someone else does; everyone else is a stranger. While nobody is the owner, a person whose face has not been seen yet is unknown. On our recordings the owner scores about 0.6 against his own faces and other people about 0.0. A track's score is the running average of its face scores, restarted when a new score contradicts it. A score from the last 5 s is fresh; after an id swap an older one may belong to someone else, so only fresh scores stop two tracks from joining. A track that scores like the owner is never merged with a person that scores like a stranger, however close they stand, and a track whose score stops matching its person leaves it, so an id swapped inside one camera is corrected at the next face check. A new box within 0.4 m of the box the same camera already tracks on a person is a second box on that person, not a new person, unless its face score says otherwise. The owner file is not in git.
+1. `drop_ended_tracks` – a track its camera lost, or whose face no longer matches its person, leaves that person.
+2. `split_people` – a person whose two tracks stay more than 1 m apart for half a second was really two people: one track leaves.
+3. `attach_free_tracks` – a new track joins the nearest person within 0.6 m whom its camera is not seeing.
+4. `create_people` – a track that joined nobody becomes a new person, shown on the map after half a second.
+5. `place_people` – each person's position, heading and face score, from their tracks in this frame.
+6. `merge_people` – two people on the same spot become one, unless a camera sees two bodies there or both cameras had already seen each of them.
+7. `forget_people` – a person no camera sees any more is removed after 1 s, or after 5 s if both cameras had seen them.
+8. `decide_labels` – the owner is whoever most recently showed the enrolled owner's face; everyone else is a stranger.
+
+The owner's face is enrolled once with `enrol_owner.py`. Every half second, each face turned to a camera is compared with it: the owner scores about 0.6, other people about 0.0.
 
 ## Robot heading
 
@@ -111,30 +137,24 @@ forward = s · (v_y, −v_x) / |v|
 
 ## Limitations
 
-| Situation | What happens |
+| What happens in the room | What the map shows |
 | --- | --- |
-| Feet hidden, person still detected | dot stays at the last spot (`held`) until the feet are seen again; no movement estimate |
-| Nobody detects the person | dot stays at the last spot (`hidden`) for up to 5 s if both cameras had placed them, then the person is forgotten; back later = new id |
-| Back from hiding more than 0.6 m away | new id; the old dot stays until its 5 s are up |
-| Leaves the area with the feet hidden | dot stays at the last spot for up to 5 s |
-| Feet read outside the area (a wrong reading, or really leaving) | under 0.5 s: ignored; over 0.5 s with no camera placing them inside: treated as leaving |
-| Sitting, crouching | feet partly hidden, the cameras take turns: the dot jitters or steps up to ~1 m |
-| Two people closer than 0.6 m, first seen by different cameras | joined into one person until a face or a split separates them; two people both cameras have already confirmed are never merged |
-| A new person | shown after 0.5 s |
-| A stranger's face scores like the owner's once (a look-alike, a blurred frame) | he takes the owner label until the owner's face is seen again |
+| A person's feet are hidden, but their body is visible | the dot stays where the feet were last seen |
+| A person is hidden from both cameras | the dot stays for up to 5 s; if they come back later, they get a new id |
+| Two people stand very close when first seen, each by a different camera | one dot for both until they move apart; the owner label can stick to the wrong one |
+| A person sits or crouches | the dot jitters or jumps by up to ~1 m |
+| A stranger's face once looks like the owner's | the stranger has the owner label until the owner's face is seen again |
+| Realtime mode (about 5 of 30 frames per second processed) | ids swap more often than when every frame is processed |
+| A camera is moved after calibration | its positions shift; it has to be calibrated again |
 
-Tried and dropped:
-
-| Idea | Result |
-| --- | --- |
-| Follow the hips from the last ankle spot (one camera) | sitting down slides the dot ~1 m toward the camera |
-| Cross both cameras' lines to the hips | 16 cm on the markers vs 11 cm for the ankles; used in 2.5 % of frames; 30–40 cm step between feet and hips when sitting |
-| Keep hidden people until they are seen leaving | walking behind someone or a 1 s ghost box left a dot forever; a stranger near the hidden owner took her id and label |
+Accuracy: about 10 cm on average (7–13 cm), measured on three taped marks in pair 5.
 
 ## Files
 
 - `track.py` – the tracking loop for live Baslers or one or two videos: people per camera, merging, owner label, robot with its heading and ball, drawing, CSV.
 - `enrol_owner.py` – records who the owner is; writes `owner/` (face vectors and two check images, not in git).
+- `check_owner.py` – tests the enrolled owner on another video: the face scores of every tracked id, and a picture of their faces in `owner/`.
+- `live_calibration.py` – the live cameras' calibration profiles (see the live camera manual).
 - `calibrate.py` – builds the floor maps of a camera pair from clicked floor points (a measured rectangle, or tile corners), on live or recorded frames.
 - `common.py` – shared: paths, lens correction, people detection, floor maps and room bounds, keypoint names, constants.
 - `faces.py` – face visibility from the pose keypoints, face vectors, similarity, the owner file.
@@ -144,5 +164,5 @@ Tried and dropped:
 - `room_map.py` – the top-down drawing of the room, with a heading arrow per person and for the robot.
 - `sources.py` – the video reader (one video paced, a second following it) and serial-selected Basler capture workers and live frame synchronization.
 - `calibration/` – lens correction files, the floor maps and the frames they were made from.
-- `models/yolo11s-pose.pt` – the pose model. Robot and ball weights are in `../training/runs/detector/weights/best.pt`, the robot heading model in `../training/runs/heading/weights/last.pt`.
+- `models/yolo11s-pose.pt` – the stock Ultralytics pose model (people with 17 keypoints), stored in git so a fresh clone runs without downloads. Robot and ball weights are in `../training/runs/detector/weights/best.pt`, the robot heading model in `../training/runs/heading/weights/last.pt`.
 - `tools/basler_record_video.py` – the group's recorder; it made the recordings above. It saves into `videos/` and also writes `<video>_times.csv`, the wall-clock time of every saved frame, for syncing two cameras.
