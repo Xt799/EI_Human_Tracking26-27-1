@@ -16,7 +16,7 @@ The method of `new_with_pub_.py`: four corners of a rectangle on the floor whose
    ```
 
 3. For each camera: step through the video to a frame where no one stands on the corners (a/d ±1 s, w/s ±10 s, Enter). Click A, B, C, D. The sketch in the top-right corner shows which corner comes next. Clicks snap to the nearest image corner; u undoes.
-4. The rectangle is also the tracked area: x 0…W, y 0…H. A position more than 20 cm outside it (`WALL_SLACK_M` in `track.py`) is dropped, and the room map shows just this area.
+4. The rectangle is also the tracked area: x 0…W, y 0…H. A position more than 10 cm outside it (`WALL_SLACK_M` in `track.py`) is dropped, and the room map shows just this area.
 5. Check the window at the end, also saved as `floor_map_<view>.jpg`. The 0.5 m grid must lie flat on the floor, and the same square must cover the same spot of floor in both cameras. With four points the fit is exact at the corners, so this picture is the only check.
 
 Then track with the same names: `uv run python tracking/track.py --video videos/a1.mp4 --position a1 --video videos/b1.mp4 --position b1`.

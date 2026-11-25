@@ -15,7 +15,7 @@ POSE_CONF = 0.25      # minimum confidence for a person box
 TRACKER = "bytetrack.yaml"
 KPT_CONF = 0.5        # a keypoint below this confidence is treated as not visible
 TRACK_TIMEOUT_S = 1.0 # a person or object not seen for this long is forgotten
-SMOOTH_ALPHA = 0.3    # weight of the newest value in a smoothed one (1 = no smoothing): track positions and learned camera offsets
+SMOOTH_HALF_S = 0.065 # smoothed track positions: a measurement counts half after this long (= weight 0.3 per frame at 30 fps)
 CAMERA_STEP_PX = 20  # a step this far straight down in the image points towards the camera on the floor
 
 # COCO keypoint indices of the pose model
@@ -38,13 +38,30 @@ def require_trained_weight(path):
     return path
 
 
-def lens_correction(width, height, intrinsics_dir=CALIB_DIR):
-    """Returns a function frame -> lens-corrected frame, for frames of the given size."""
+def lens_matrices(width, height, intrinsics_dir=CALIB_DIR):
+    """(camera matrix, distortion coefficients, camera matrix of the lens-corrected frame) for frames of the given size."""
     K = np.load(os.path.join(intrinsics_dir, "camera_matrix.npy"))
     D = np.load(os.path.join(intrinsics_dir, "distortion_coefficients.npy"))
     new_K, _ = cv2.getOptimalNewCameraMatrix(K, D, (width, height), 0, (width, height))
+    return K, D, new_K
+
+
+def lens_correction(width, height, intrinsics_dir=CALIB_DIR):
+    """Returns a function frame -> lens-corrected frame, for frames of the given size."""
+    K, D, new_K = lens_matrices(width, height, intrinsics_dir)
     map1, map2 = cv2.initUndistortRectifyMap(K, D, None, new_K, (width, height), cv2.CV_16SC2)
     return lambda frame: cv2.remap(frame, map1, map2, interpolation=cv2.INTER_LINEAR)
+
+
+def camera_pose(H, width, height, intrinsics_dir=CALIB_DIR):
+    """Where the camera hangs, from its floor map: ((x, y) on the floor below it, height above the floor), in metres."""
+    M = np.linalg.inv(lens_matrices(width, height, intrinsics_dir)[2]) @ np.linalg.inv(H)   # floor point (x, y, 1) -> camera coordinates, up to scale
+    M /= (np.linalg.norm(M[:, 0]) + np.linalg.norm(M[:, 1])) / 2              # the two floor axes are unit vectors
+    if M[2, 2] < 0:                                                           # the floor lies in front of the camera
+        M = -M
+    R = np.column_stack([M[:, 0], M[:, 1], np.cross(M[:, 0], M[:, 1])])
+    centre = -R.T @ M[:, 2]
+    return centre[:2], abs(float(centre[2]))
 
 
 def camera_positions():
