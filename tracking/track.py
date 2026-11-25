@@ -44,16 +44,27 @@ LEFT_COLOUR, RIGHT_COLOUR, BONE_COLOUR, DOT_COLOUR = (0, 0, 255), (0, 255, 0), (
 
 
 # ---- Floor positions ----
-def to_metres(H, point_px, room, above_m=0.0, camera=None):
-    """Pixel point -> (x, y) metres on the floor, or None if it lands beyond the walls of the room (a detection on a wall).
-    A point above_m above the floor maps too far from the camera; it is pulled back towards the camera ((x, y) below it, height)."""
+def floor_point(H, point_px, above_m=0.0, camera=None):
+    """Pixel point -> (x, y) metres on the floor. A point above_m above the floor maps too far from the camera; it is pulled back
+    towards the camera ((x, y) below it, height)."""
     m = cv2.perspectiveTransform(np.asarray(point_px, np.float32).reshape(1, 1, 2), H)[0, 0]
     if above_m:
         below, height = camera
         m = below + (m - below) * (height - above_m) / height
+    return m
+
+
+def in_room(m, room):
+    """True for a point inside the tracked area, or at most WALL_SLACK_M beyond its edge."""
     (x0, x1), (y0, y1) = room
     s = WALL_SLACK_M
-    return m if x0 - s <= m[0] <= x1 + s and y0 - s <= m[1] <= y1 + s else None
+    return x0 - s <= m[0] <= x1 + s and y0 - s <= m[1] <= y1 + s
+
+
+def to_metres(H, point_px, room):
+    """Pixel point on the floor -> (x, y) metres, or None if it lands outside the tracked area."""
+    m = floor_point(H, point_px)
+    return m if in_room(m, room) else None
 
 
 def person_floor_point(kxy, kconf):
@@ -101,9 +112,11 @@ class Person(Track):
     def __init__(self):
         super().__init__()
         self.last_seen = -1e9        # time of the last detection, placed or not
+        self.outside_at = -1e9       # last time its feet were seen outside the tracked area
         self.range_m = None          # distance on the floor from its camera at the last placement
         self.sim = None
         self.looked = -1e9           # time of the last face score
+        self.owner_look = -1e9       # time of the last face score at or above OWNER_SIM
         self.last_check = -1e9
         self.heading = None          # smoothed unit vector on the floor the body faces (orientation.py)
         self.heading_w = 0.0         # weight of the last heading measurement
@@ -121,6 +134,8 @@ class Person(Track):
         """Folds one face score into the running similarity. A score that contradicts it restarts it: the track now follows someone else."""
         self.sim = (score + self.sim) / 2 if self.sim is not None and compatible(score, self.sim) else score
         self.looked = t
+        if score >= OWNER_SIM:
+            self.owner_look = t
 
 
 class Camera:
@@ -156,8 +171,10 @@ def update_people(camera, encoder, t):
         person = camera.people.setdefault(tid, Person())
         person.last_seen = t
         pt = person_floor_point(kxy[i], kconf[i])
-        m = to_metres(camera.H, pt, camera.room, ANKLE_H_M, camera.pose) if pt is not None else None
-        if m is not None:                # feet hidden or beyond the walls: this camera does not place the person; the other one may
+        m = floor_point(camera.H, pt, ANKLE_H_M, camera.pose) if pt is not None else None
+        if m is not None and not in_room(m, camera.room):
+            person.outside_at, m = t, None
+        if m is not None:                # feet hidden or outside the area: this camera does not place the person; the other one may
             person.update_position(m, t)
             person.range_m = float(np.linalg.norm(m - camera.pose[0]))
         person.update_heading(body_heading(kxy[i], kconf[i], boxes[i], camera.H, camera.floor_frame, pt), t)
@@ -204,13 +221,14 @@ def open_log():
 
 
 def log_positions(writer, frame_index, t, people, objects, found):
-    """One CSV row per person whose position is known (cameras "held" and no raw position when none placed them in this frame) and per object placed in this frame."""
+    """One CSV row per confirmed person whose position is known and per object placed in this frame. A person no camera placed in this
+    frame has no raw position and cameras "held" while a camera still detects them, "hidden" while none does."""
     for p in people:
-        if p.located(t):
+        if p.shown(t):
             placed = p.placed == t
             writer.writerow([frame_index, f"{t:.3f}", "person", f"P{p.id}", p.label, f"{p.floor_m[0]:.3f}", f"{p.floor_m[1]:.3f}",
                              f"{p.raw_m[0]:.3f}" if placed else "", f"{p.raw_m[1]:.3f}" if placed else "",
-                             "+".join(p.placed_by) if placed else "held", "" if p.sim is None else f"{p.sim:.2f}",
+                             "+".join(p.placed_by) if placed else "hidden" if p.lost(t) else "held", "" if p.sim is None else f"{p.sim:.2f}",
                              "" if p.heading is None else f"{degrees(p.heading):.1f}"])
     for name, obj in objects.items():
         if obj.placed == t:
@@ -272,8 +290,8 @@ def place_windows(cameras):
 
 
 def room_marks(people, objects, t):
-    """What the room map shows, as RoomMap.draw takes it: the people whose position is known, and the robot and ball while their position is fresh."""
-    marks = [(p.floor_m, LABEL_COLOUR[p.label], f"P{p.id} {p.label}", p.trail, p.heading) for p in people if p.located(t)]
+    """What the room map shows, as RoomMap.draw takes it: the confirmed people whose position is known, and the robot and ball while their position is fresh."""
+    marks = [(p.floor_m, LABEL_COLOUR[p.label], f"P{p.id} {p.label}", p.trail, p.heading) for p in people if p.shown(t)]
     marks += [(obj.floor_m, LABEL_COLOUR[name], name, [], None) for name, obj in objects.items() if obj.fresh(t)]
     return marks
 
